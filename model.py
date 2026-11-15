@@ -2034,3 +2034,149 @@ def edit_distance_matrix(strings):
 
     return D
 
+# Step 16 - kmedoids_voronoi
+def kmedoids_voronoi(D, m0, max_iter=100):
+    """
+    Perform K-Medoids clustering using Voronoi iteration
+    on a precomputed dissimilarity matrix.
+
+    Parameters
+    ----------
+    D : array-like of shape (N, N)
+        Pairwise dissimilarity matrix.
+
+    m0 : array-like of shape (K,)
+        Initial medoid indices. Each value identifies an
+        original observation in the dataset.
+
+    max_iter : int, default=100
+        Maximum number of assignment and medoid-update rounds.
+
+    Returns
+    -------
+    m : numpy.ndarray of shape (K,)
+        Final medoid indices, in cluster order.
+
+    z : numpy.ndarray of shape (N,)
+        Integer cluster assignments.
+
+    history : list of float
+        Total assignment cost recorded after every assignment.
+    """
+
+    # Convert the dissimilarity matrix to a floating-point array.
+    D = np.asarray(D, dtype=float)
+
+    # Create an independent integer copy of the initial medoids.
+    # This ensures that m0 is never modified.
+    m = np.array(m0, dtype=int, copy=True)
+
+    # Validate the dissimilarity matrix.
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("D must be a square two-dimensional matrix.")
+
+    N = D.shape[0]
+
+    if N == 0:
+        raise ValueError("D must contain at least one observation.")
+
+    # Validate the initial medoid indices.
+    if m.ndim != 1 or len(m) == 0:
+        raise ValueError("m0 must be a non-empty one-dimensional array.")
+
+    if np.any(m < 0) or np.any(m >= N):
+        raise ValueError("Medoid indices must be valid observation indices.")
+
+    # Validate the maximum iteration count.
+    if (
+        isinstance(max_iter, (bool, np.bool_))
+        or not isinstance(max_iter, (int, np.integer))
+        or max_iter < 0
+    ):
+        raise ValueError("max_iter must be a non-negative integer.")
+
+    # Store the assignment cost after each iteration.
+    history = []
+
+    # ---------------------------------------------------------
+    # 1. Voronoi assignment and medoid-update iterations
+    # ---------------------------------------------------------
+
+    for iteration in range(max_iter):
+
+        # Assign every observation to its nearest medoid.
+        # Columns correspond to medoids in their existing cluster order.
+        # np.argmin resolves ties in favour of the lowest cluster index.
+        distances = D[:, m]
+
+        z = np.argmin(distances, axis=1).astype(int)
+
+        # Calculate the total dissimilarity to the assigned medoids.
+        assigned_cost = distances[np.arange(N), z]
+
+        # Record the assignment cost as a Python float.
+        history.append(float(np.sum(assigned_cost)))
+
+        # Preserve the previous medoids for the convergence check.
+        old_m = m.copy()
+
+        # -----------------------------------------------------
+        # 2. Update each medoid independently
+        # -----------------------------------------------------
+
+        for k in range(len(m)):
+
+            # Find all observations assigned to cluster k.
+            members = np.flatnonzero(z == k)
+
+            # Empty clusters retain their existing medoid.
+            if len(members) == 0:
+                continue
+
+            # Extract pairwise dissimilarities within this cluster.
+            cluster_distances = D[np.ix_(members, members)]
+
+            # Calculate the total dissimilarity from each member
+            # to every other member in the same cluster.
+            total_distances = np.sum(
+                cluster_distances,
+                axis=1
+            )
+
+            # Select the member with the smallest total dissimilarity.
+            # Since members are sorted, argmin resolves ties by
+            # selecting the lowest original observation index.
+            best_member = int(
+                members[np.argmin(total_distances)]
+            )
+
+            # Update the medoid for the current cluster.
+            m[k] = best_member
+
+        # -----------------------------------------------------
+        # 3. Check for convergence
+        # -----------------------------------------------------
+
+        # If no medoid has changed, the clustering has converged.
+        if np.array_equal(m, old_m):
+            return m, z, history
+
+    # ---------------------------------------------------------
+    # 4. Final assignment when max_iter is reached
+    # ---------------------------------------------------------
+
+    # Assign observations once more using the latest medoids.
+    distances = D[:, m]
+
+    z = np.argmin(distances, axis=1).astype(int)
+
+    # Calculate the final assignment cost.
+    final_cost = float(
+        np.sum(distances[np.arange(N), z])
+    )
+
+    # Append the final cost to the history.
+    history.append(final_cost)
+
+    return m, z, history
+
