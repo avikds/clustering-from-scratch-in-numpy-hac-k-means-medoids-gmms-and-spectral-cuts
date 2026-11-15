@@ -2480,3 +2480,182 @@ def gmm_e_step(X, pi, mu, Sigma):
 
     return r, ll
 
+# Step 19 - gmm_m_step
+def gmm_m_step(X, r, cov_type="full", reg=1e-6):
+    """
+    Perform the Maximization (M) step of a Gaussian Mixture Model.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Input dataset containing N observations and D features.
+
+    r : array-like of shape (N, K)
+        Responsibilities obtained from the E-step.
+
+    cov_type : str, default="full"
+        Covariance structure:
+            - "full": Full covariance for each component.
+            - "tied": Shared covariance across all components.
+            - "diag": Diagonal covariance for each component.
+            - "spherical": One variance per component.
+
+    reg : float, default=1e-6
+        Regularization added to every covariance matrix diagonal.
+
+    Returns
+    -------
+    pi : numpy.ndarray of shape (K,)
+        Updated mixture weights.
+
+    mu : numpy.ndarray of shape (K, D)
+        Updated component means.
+
+    Sigma : numpy.ndarray of shape (K, D, D)
+        Updated covariance matrices.
+    """
+
+    # Validate the requested covariance type.
+    valid_types = ("full", "tied", "diag", "spherical")
+
+    if cov_type not in valid_types:
+        raise ValueError(
+            "cov_type must be 'full', 'tied', 'diag', or 'spherical'."
+        )
+
+    # Convert inputs into floating-point NumPy arrays.
+    X = np.asarray(X, dtype=float)
+    r = np.asarray(r, dtype=float)
+
+    # Validate the input dimensions.
+    if X.ndim != 2 or r.ndim != 2:
+        raise ValueError("X and r must be two-dimensional arrays.")
+
+    N, D = X.shape
+
+    if r.shape[0] != N:
+        raise ValueError("X and r must contain the same number of observations.")
+
+    K = r.shape[1]
+
+    if N == 0 or D == 0 or K == 0:
+        raise ValueError("X and r must contain observations, features and components.")
+
+    # ---------------------------------------------------------
+    # 1. Calculate effective component membership counts
+    # ---------------------------------------------------------
+
+    # Nk represents the effective number of observations assigned
+    # to each Gaussian component.
+    #
+    # A small constant prevents division by zero when a component
+    # receives negligible responsibility.
+    Nk = np.sum(r, axis=0) + 1e-10
+
+    # Calculate the total effective number of observations.
+    total_Nk = np.sum(Nk)
+
+    # ---------------------------------------------------------
+    # 2. Update mixture weights
+    # ---------------------------------------------------------
+
+    # Each mixture weight is proportional to its effective membership.
+    pi = Nk / total_Nk
+
+    # ---------------------------------------------------------
+    # 3. Update Gaussian component means
+    # ---------------------------------------------------------
+
+    # Calculate the weighted mean of each component.
+    #
+    # mu[k] = sum_n(r[n,k] * X[n]) / Nk[k]
+    mu = (r.T @ X) / Nk[:, np.newaxis]
+
+    # ---------------------------------------------------------
+    # 4. Calculate weighted scatter matrices
+    # ---------------------------------------------------------
+
+    # Calculate the difference between every observation
+    # and each component's updated mean.
+    diff = X[:, np.newaxis, :] - mu[np.newaxis, :, :]
+
+    # Calculate the weighted covariance scatter for each component.
+    #
+    # S[k] = (1 / Nk[k]) * sum_n(
+    #            r[n,k] * diff[n,k] @ diff[n,k].T
+    #        )
+    S = np.einsum(
+        "nk,nkd,nke->kde",
+        r,
+        diff,
+        diff
+    ) / Nk[:, np.newaxis, np.newaxis]
+
+    # ---------------------------------------------------------
+    # 5. Construct covariance matrices
+    # ---------------------------------------------------------
+
+    identity = np.eye(D)
+
+    if cov_type == "full":
+
+        # Full covariance:
+        # Every component retains its complete weighted scatter matrix.
+        Sigma = S.copy()
+
+    elif cov_type == "tied":
+
+        # Tied covariance:
+        # Combine the scatter matrices using effective component sizes.
+        common_cov = np.sum(
+            Nk[:, np.newaxis, np.newaxis] * S,
+            axis=0
+        ) / total_Nk
+
+        # Every component receives the same covariance matrix.
+        Sigma = np.repeat(
+            common_cov[np.newaxis, :, :],
+            K,
+            axis=0
+        )
+
+    elif cov_type == "diag":
+
+        # Diagonal covariance:
+        # Retain only the diagonal elements of each scatter matrix.
+        Sigma = np.zeros((K, D, D), dtype=float)
+
+        diagonal_values = np.diagonal(
+            S,
+            axis1=1,
+            axis2=2
+        )
+
+        indices = np.arange(D)
+
+        Sigma[:, indices, indices] = diagonal_values
+
+    else:
+
+        # Spherical covariance:
+        # Calculate one variance per component using trace(S[k]) / D.
+        spherical_variances = (
+            np.trace(S, axis1=1, axis2=2) / D
+        )
+
+        # Construct an isotropic covariance matrix for each component.
+        Sigma = (
+            spherical_variances[:, np.newaxis, np.newaxis]
+            * identity[np.newaxis, :, :]
+        )
+
+    # ---------------------------------------------------------
+    # 6. Apply covariance regularization
+    # ---------------------------------------------------------
+
+    # Add the ridge regularization term to every covariance diagonal.
+    # This helps keep covariance matrices numerically well-conditioned.
+    Sigma += reg * identity[np.newaxis, :, :]
+
+    return pi, mu, Sigma
+

@@ -28,6 +28,7 @@ python scaffold.py
 - [x] **16.** kmedoids_voronoi
 - [x] **17.** pam
 - [x] **18.** gmm_e_step
+- [x] **19.** gmm_m_step
 
 ---
 
