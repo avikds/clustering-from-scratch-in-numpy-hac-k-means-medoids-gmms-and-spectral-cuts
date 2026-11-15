@@ -3974,3 +3974,269 @@ def spectral_clustering(W, K, rng, variant="sym", n_init=10):
         "eigvals": eigvals
     }
 
+# Step 28 - ncut_value
+def ncut_value(W, labels):
+    """
+    Calculate the graph cut and normalized cut for a partition.
+
+    Parameters
+    ----------
+    W : array-like of shape (N, N)
+        Symmetric weighted adjacency matrix.
+
+    labels : array-like of shape (N,)
+        Cluster assignment of each graph node.
+        Labels may be arbitrary values.
+
+    Returns
+    -------
+    dict
+        cut  : Total graph cut.
+        ncut : Normalized graph cut.
+
+    Both quantities include the factor 1/2 to avoid
+    double-counting undirected edges.
+    """
+
+    # Convert inputs into NumPy arrays.
+    W = np.asarray(W, dtype=float)
+    labels = np.asarray(labels)
+
+    # Validate the adjacency matrix.
+    if W.ndim != 2 or W.shape[0] != W.shape[1]:
+        raise ValueError("W must be a square two-dimensional matrix.")
+
+    N = W.shape[0]
+
+    if labels.ndim != 1 or len(labels) != N:
+        raise ValueError("labels must be a one-dimensional array of length N.")
+
+    if not np.all(np.isfinite(W)):
+        raise ValueError("W must contain only finite values.")
+
+    if not np.allclose(W, W.T):
+        raise ValueError("W must be symmetric.")
+
+    # Calculate the degree of every node.
+    d = np.sum(W, axis=1)
+
+    # Obtain the distinct cluster labels.
+    unique_labels = np.unique(labels)
+
+    # Initialize the cut and normalized cut values.
+    cut = 0.0
+    ncut = 0.0
+
+    # ---------------------------------------------------------
+    # Calculate contributions from every cluster
+    # ---------------------------------------------------------
+
+    for label in unique_labels:
+
+        # Identify the nodes belonging to the current cluster.
+        S = labels == label
+
+        # Identify all nodes outside the current cluster.
+        S_complement = ~S
+
+        # Calculate the volume of the current cluster.
+        volume = float(np.sum(d[S]))
+
+        # Calculate the total weight of edges crossing
+        # between the cluster and its complement.
+        crossing_weight = float(
+            np.sum(W[np.ix_(S, S_complement)])
+        )
+
+        # Accumulate half the crossing weight to avoid
+        # counting every undirected edge twice.
+        cut += 0.5 * crossing_weight
+
+        # A zero-volume cluster makes normalized cut undefined.
+        if volume <= 0.0:
+            raise ValueError("Every cluster must have positive volume.")
+
+        # Accumulate the normalized cut contribution.
+        ncut += 0.5 * crossing_weight / volume
+
+    return {
+        "cut": float(cut),
+        "ncut": float(ncut)
+    }
+
+
+def escape_probabilities(W, S):
+    """
+    Calculate the one-step escape probabilities of a random walk
+    between a subset of nodes and its complement.
+
+    Parameters
+    ----------
+    W : array-like of shape (N, N)
+        Symmetric weighted adjacency matrix.
+
+    S : array-like of shape (N,)
+        Boolean mask identifying the subset of nodes.
+
+    Returns
+    -------
+    tuple of float
+        (p(S_complement | S), p(S | S_complement))
+
+        The first value is the probability of leaving S
+        in one step.
+
+        The second value is the probability of leaving
+        the complement and entering S in one step.
+    """
+
+    # Convert inputs into NumPy arrays.
+    W = np.asarray(W, dtype=float)
+    S = np.asarray(S)
+
+    # Validate the adjacency matrix.
+    if W.ndim != 2 or W.shape[0] != W.shape[1]:
+        raise ValueError("W must be a square two-dimensional matrix.")
+
+    N = W.shape[0]
+
+    if S.ndim != 1 or len(S) != N:
+        raise ValueError("S must be a one-dimensional mask of length N.")
+
+    if S.dtype != np.bool_:
+        raise ValueError("S must be a boolean mask.")
+
+    if not np.all(np.isfinite(W)):
+        raise ValueError("W must contain only finite values.")
+
+    if not np.allclose(W, W.T):
+        raise ValueError("W must be symmetric.")
+
+    # Ensure that both S and its complement are non-empty.
+    if not np.any(S) or np.all(S):
+        raise ValueError("S and its complement must both be non-empty.")
+
+    # Identify the complement of S.
+    S_complement = ~S
+
+    # Calculate the degree of every node.
+    d = np.sum(W, axis=1)
+
+    # Calculate the volume of S and its complement.
+    vol_S = float(np.sum(d[S]))
+    vol_complement = float(np.sum(d[S_complement]))
+
+    # Both volumes must be positive for the probabilities
+    # to be mathematically defined.
+    if vol_S <= 0.0 or vol_complement <= 0.0:
+        raise ValueError("Both subsets must have positive volume.")
+
+    # Calculate the total weight of edges crossing the partition.
+    crossing_weight = float(
+        np.sum(W[np.ix_(S, S_complement)])
+    )
+
+    # Probability of a random walk leaving S.
+    p_leave_S = crossing_weight / vol_S
+
+    # Probability of a random walk leaving the complement.
+    p_leave_complement = crossing_weight / vol_complement
+
+    return (
+        float(p_leave_S),
+        float(p_leave_complement)
+    )
+
+
+def best_bipartition(W, objective="ncut"):
+    """
+    Find the best binary graph partition using exhaustive search.
+
+    Parameters
+    ----------
+    W : array-like of shape (N, N)
+        Symmetric weighted adjacency matrix.
+
+    objective : str, default="ncut"
+        Partitioning objective:
+            - "cut": Minimize the graph cut.
+            - "ncut": Minimize the normalized graph cut.
+
+    Returns
+    -------
+    labels : numpy.ndarray of shape (N,)
+        Integer binary partition labels (0 or 1).
+
+    value : float
+        Minimum objective value found.
+
+    Notes
+    -----
+    Every non-trivial partition is examined exactly once.
+    The last node is fixed to label 0 to avoid evaluating
+    both a partition and its complement.
+
+    Ties are resolved in favour of the earliest partition.
+    A later partition replaces the current best only when
+    its objective is lower by more than 1e-12.
+    """
+
+    # Validate the requested objective.
+    if objective not in ("cut", "ncut"):
+        raise ValueError("objective must be 'cut' or 'ncut'.")
+
+    # Convert the adjacency matrix to a floating-point array.
+    W = np.asarray(W, dtype=float)
+
+    # Validate the adjacency matrix.
+    if W.ndim != 2 or W.shape[0] != W.shape[1]:
+        raise ValueError("W must be a square two-dimensional matrix.")
+
+    if not np.all(np.isfinite(W)):
+        raise ValueError("W must contain only finite values.")
+
+    if not np.allclose(W, W.T):
+        raise ValueError("W must be symmetric.")
+
+    N = W.shape[0]
+
+    # At least two nodes are necessary for a non-empty bipartition.
+    if N < 2:
+        raise ValueError("At least two nodes are required.")
+
+    # ---------------------------------------------------------
+    # Exhaustively evaluate all non-trivial bipartitions
+    # ---------------------------------------------------------
+
+    best_labels = None
+    best_value = np.inf
+
+    # Fix the last node to label 0.
+    # This avoids considering complementary partitions twice.
+    #
+    # Codes range from 1 to 2^(N-1) - 1.
+    # Code zero would produce an empty cluster.
+    for code in range(1, 2 ** (N - 1)):
+
+        # Convert the current integer code into binary labels.
+        # Node i receives label (code >> i) & 1.
+        labels = (
+            (code >> np.arange(N)) & 1
+        ).astype(int)
+
+        # Evaluate the current partition.
+        value = ncut_value(
+            W,
+            labels
+        )[objective]
+
+        # Retain the first partition initially.
+        # Replace it only when the new value is lower
+        # by more than the prescribed tolerance.
+        if value < best_value - 1e-12:
+
+            best_value = float(value)
+            best_labels = labels.copy()
+
+    return best_labels, float(best_value)
+
