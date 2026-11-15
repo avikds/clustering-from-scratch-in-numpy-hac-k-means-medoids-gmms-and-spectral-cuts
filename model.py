@@ -3590,3 +3590,138 @@ def k_selection_curves(X_train, X_val, Ks, rng, n_init=5, cov_type="full"):
         "pick": pick
     }
 
+# Step 25 - gaussian_affinity
+def gaussian_affinity(X, sigma, n_neighbors=None):
+    """
+    Construct a symmetric Gaussian affinity matrix for spectral clustering.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Input dataset containing N observations and D features.
+
+    sigma : float
+        Gaussian kernel bandwidth. Must be positive and finite.
+
+    n_neighbors : int or None, default=None
+        If None, construct a fully connected similarity graph.
+
+        If an integer k is provided, retain an edge between i and j
+        when either j is among the k nearest neighbours of i or
+        i is among the k nearest neighbours of j.
+
+    Returns
+    -------
+    W : numpy.ndarray of shape (N, N)
+        Symmetric Gaussian affinity matrix with a diagonal of ones.
+    """
+
+    # Convert the input dataset into a floating-point NumPy array.
+    X = np.asarray(X, dtype=float)
+
+    # Validate the input data.
+    if X.ndim != 2:
+        raise ValueError("X must be a two-dimensional array.")
+
+    N = X.shape[0]
+
+    # Validate the Gaussian kernel bandwidth.
+    if not np.isscalar(sigma):
+        raise ValueError("sigma must be a positive finite scalar.")
+
+    try:
+        sigma = float(sigma)
+    except (TypeError, ValueError):
+        raise ValueError("sigma must be a positive finite scalar.")
+
+    if not np.isfinite(sigma) or sigma <= 0:
+        raise ValueError("sigma must be positive and finite.")
+
+    # Validate the number of nearest neighbours.
+    if n_neighbors is not None:
+        if (
+            isinstance(n_neighbors, (bool, np.bool_))
+            or not isinstance(n_neighbors, (int, np.integer))
+            or n_neighbors < 0
+        ):
+            raise ValueError("n_neighbors must be a non-negative integer.")
+
+    # ---------------------------------------------------------
+    # 1. Compute pairwise squared Euclidean distances
+    # ---------------------------------------------------------
+
+    # Reuse the pairwise distance implementation from Step 1.
+    # Squared distances avoid unnecessary square-root calculations.
+    D2 = pairwise_distances(
+        X,
+        metric="sqeuclidean"
+    )
+
+    # ---------------------------------------------------------
+    # 2. Construct Gaussian similarities
+    # ---------------------------------------------------------
+
+    # Gaussian kernel:
+    # W[i,j] = exp(-||xi - xj||^2 / (2 * sigma^2))
+    W = np.exp(
+        -D2 / (2.0 * sigma ** 2)
+    )
+
+    # Ensure that every observation has a self-similarity of exactly 1.
+    np.fill_diagonal(W, 1.0)
+
+    # ---------------------------------------------------------
+    # 3. Apply optional k-nearest-neighbour sparsification
+    # ---------------------------------------------------------
+
+    if n_neighbors is not None:
+
+        k = n_neighbors
+
+        # Initially, no edges are retained.
+        keep = np.zeros((N, N), dtype=bool)
+
+        # Always preserve self-connections.
+        np.fill_diagonal(keep, True)
+
+        # Process each observation independently.
+        for i in range(N):
+
+            # Exclude the observation itself from its neighbours.
+            candidates = np.concatenate((
+                np.arange(i),
+                np.arange(i + 1, N)
+            ))
+
+            # Stable sorting breaks equal-distance ties
+            # by choosing the lowest observation index.
+            order = np.argsort(
+                D2[i, candidates],
+                kind="stable"
+            )
+
+            # Select the k nearest distinct observations.
+            nearest = candidates[order[:k]]
+
+            # Retain the directed nearest-neighbour connections.
+            keep[i, nearest] = True
+
+        # Symmetrize using the union of both directed neighbour relations.
+        # An edge is retained if either endpoint selects the other.
+        keep = keep | keep.T
+
+        # Remove similarities for edges that were not retained.
+        W[~keep] = 0.0
+
+    # ---------------------------------------------------------
+    # 4. Enforce exact symmetry and diagonal values
+    # ---------------------------------------------------------
+
+    # Explicitly enforce numerical symmetry.
+    W = 0.5 * (W + W.T)
+
+    # Restore the exact unit diagonal.
+    np.fill_diagonal(W, 1.0)
+
+    return W
+

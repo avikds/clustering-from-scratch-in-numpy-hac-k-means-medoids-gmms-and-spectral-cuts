@@ -34,6 +34,7 @@ python scaffold.py
 - [x] **22.** bic_score
 - [x] **23.** silhouette_samples
 - [x] **24.** k_selection_curves
+- [x] **25.** gaussian_affinity
 
 ---
 
