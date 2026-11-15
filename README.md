@@ -26,6 +26,7 @@ python scaffold.py
 - [x] **14.** block_vq
 - [x] **15.** edit_distance_matrix
 - [x] **16.** kmedoids_voronoi
+- [x] **17.** pam
 
 ---
 

@@ -2180,3 +2180,157 @@ def kmedoids_voronoi(D, m0, max_iter=100):
 
     return m, z, history
 
+# Step 17 - pam
+def pam(D, m0, max_iter=100):
+    """
+    Perform Partitioning Around Medoids (PAM) using a swap search.
+
+    Parameters
+    ----------
+    D : array-like of shape (N, N)
+        Precomputed pairwise dissimilarity matrix.
+
+    m0 : array-like of shape (K,)
+        Initial medoid indices.
+
+    max_iter : int, default=100
+        Maximum number of complete medoid-swap passes.
+
+    Returns
+    -------
+    m : numpy.ndarray of shape (K,)
+        Final medoid indices, in cluster order.
+
+    z : numpy.ndarray of shape (N,)
+        Cluster assignment of every observation.
+
+    history : list of float
+        Initial cost followed by the cost after each completed pass.
+    """
+
+    # Convert the dissimilarity matrix to a floating-point array.
+    D = np.asarray(D, dtype=float)
+
+    # Validate the dissimilarity matrix.
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("D must be a square two-dimensional matrix.")
+
+    N = D.shape[0]
+
+    if N == 0:
+        raise ValueError("D must contain at least one observation.")
+
+    # Validate and independently copy the initial medoids.
+    m = np.asarray(m0)
+
+    if m.ndim != 1 or len(m) == 0:
+        raise ValueError("m0 must be a non-empty one-dimensional array.")
+
+    if not np.issubdtype(m.dtype, np.integer):
+        raise ValueError("Medoid indices must be integers.")
+
+    m = m.astype(int, copy=True)
+
+    K = len(m)
+
+    # Ensure that every medoid index is valid.
+    if np.any(m < 0) or np.any(m >= N):
+        raise ValueError("Medoid indices must be between 0 and N-1.")
+
+    # Initial medoids must represent distinct observations.
+    if len(np.unique(m)) != K:
+        raise ValueError("Initial medoids must be distinct.")
+
+    # Validate the maximum number of passes.
+    if (
+        isinstance(max_iter, (bool, np.bool_))
+        or not isinstance(max_iter, (int, np.integer))
+        or max_iter < 0
+    ):
+        raise ValueError("max_iter must be a non-negative integer.")
+
+    # ---------------------------------------------------------
+    # 1. Calculate the initial clustering cost
+    # ---------------------------------------------------------
+
+    def calculate_cost(medoids):
+        """
+        Calculate the total dissimilarity to the nearest medoid.
+        """
+
+        # Obtain distances from every observation to every medoid.
+        distances = D[:, medoids]
+
+        # Each observation is assigned to its nearest medoid.
+        nearest_distances = np.min(distances, axis=1)
+
+        # Return the total clustering cost as a Python float.
+        return float(np.sum(nearest_distances))
+
+    # Start the history with the cost of the initial medoids.
+    current_cost = calculate_cost(m)
+
+    history = [current_cost]
+
+    # ---------------------------------------------------------
+    # 2. Perform PAM medoid-swap passes
+    # ---------------------------------------------------------
+
+    for _ in range(max_iter):
+
+        # Track whether at least one swap is accepted in this pass.
+        swapped = False
+
+        # Visit each medoid position in cluster order.
+        for k in range(K):
+
+            # Try replacing the current medoid with every observation.
+            for o in range(N):
+
+                # A medoid cannot be replaced by an observation
+                # that is already serving as a medoid.
+                if o in m:
+                    continue
+
+                # Create a candidate medoid configuration.
+                candidate = m.copy()
+
+                # Replace medoid k with observation o.
+                candidate[k] = o
+
+                # Calculate the cost of the candidate configuration.
+                candidate_cost = calculate_cost(candidate)
+
+                # Accept the swap only when the cost decreases
+                # by more than the specified tolerance.
+                if candidate_cost < current_cost - 1e-12:
+
+                    # Immediately retain the improved medoid.
+                    m[k] = o
+
+                    # Update the current cost.
+                    current_cost = candidate_cost
+
+                    # Mark that an improvement occurred.
+                    swapped = True
+
+        # Record the cost after completing the entire pass.
+        history.append(float(current_cost))
+
+        # Stop when an entire pass produces no accepted swaps.
+        if not swapped:
+            break
+
+    # ---------------------------------------------------------
+    # 3. Calculate final cluster assignments
+    # ---------------------------------------------------------
+
+    # Calculate distances from every observation to the final medoids.
+    final_distances = D[:, m]
+
+    # Assign observations to their nearest medoids.
+    # Ties are resolved in favour of the lowest cluster index.
+    z = np.argmin(final_distances, axis=1).astype(int)
+
+    return m, z, history
+
