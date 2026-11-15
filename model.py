@@ -1929,3 +1929,108 @@ def block_vq(image, b, K, rng, n_init=1, max_iter=30):
         "bpp_total": bpp_total
     }
 
+# Step 15 - edit_distance_matrix
+def edit_distance(a, b):
+    """
+    Calculate the Levenshtein edit distance between two strings.
+
+    The edit distance is the minimum number of single-character
+    insertions, deletions, and substitutions required to transform
+    string a into string b.
+
+    Parameters
+    ----------
+    a : str
+        First input string.
+
+    b : str
+        Second input string.
+
+    Returns
+    -------
+    int
+        Minimum number of editing operations required.
+    """
+
+    # Use the shorter string as the second string to minimize memory usage.
+    if len(a) < len(b):
+        a, b = b, a
+
+    m = len(a)
+    n = len(b)
+
+    # Initialize the previous dynamic programming row.
+    # Converting an empty string into b requires n insertions.
+    previous = list(range(n + 1))
+
+    # Process each character of the first string.
+    for i in range(1, m + 1):
+
+        # Initialize the current row.
+        # Converting the first i characters of a into an empty
+        # string requires i deletions.
+        current = [i] + [0] * n
+
+        for j in range(1, n + 1):
+
+            # No substitution is required when characters match.
+            cost = 0 if a[i - 1] == b[j - 1] else 1
+
+            # Calculate the minimum cost among:
+            # 1. Deletion: previous[j] + 1
+            # 2. Insertion: current[j - 1] + 1
+            # 3. Substitution: previous[j - 1] + cost
+            current[j] = min(
+                previous[j] + 1,
+                current[j - 1] + 1,
+                previous[j - 1] + cost
+            )
+
+        # Move to the next dynamic programming row.
+        previous = current
+
+    # The final cell contains the minimum edit distance.
+    return int(previous[n])
+
+
+def edit_distance_matrix(strings):
+    """
+    Compute the pairwise Levenshtein distance matrix for a collection
+    of strings.
+
+    Parameters
+    ----------
+    strings : array-like of shape (N,)
+        Collection of input strings.
+
+    Returns
+    -------
+    D : numpy.ndarray of shape (N, N)
+        Symmetric integer matrix where D[i, j] is the edit distance
+        between strings[i] and strings[j].
+
+        The diagonal contains zeros.
+    """
+
+    # Convert the collection into a list for indexed access.
+    strings = list(strings)
+
+    # Determine the number of input strings.
+    N = len(strings)
+
+    # Initialize an integer distance matrix with zeros.
+    D = np.zeros((N, N), dtype=int)
+
+    # Calculate each unordered pair exactly once.
+    for i in range(N):
+        for j in range(i + 1, N):
+
+            # Calculate the Levenshtein distance.
+            distance = edit_distance(strings[i], strings[j])
+
+            # Store the result symmetrically.
+            D[i, j] = distance
+            D[j, i] = distance
+
+    return D
+
