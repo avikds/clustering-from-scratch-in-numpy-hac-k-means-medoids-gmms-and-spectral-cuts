@@ -1529,3 +1529,117 @@ def kmeanspp_init(X, K, rng):
 
     return mu
 
+# Step 12 - kmeans_restarts
+def kmeans_restarts(X, K, n_init, rng, init="kmeans++", max_iter=100):
+    """
+    Run K-means multiple times with different initializations
+    and return the solution with the lowest final distortion.
+
+    Parameters
+    ----------
+    X : numpy.ndarray of shape (N, D)
+        Input dataset.
+
+    K : int
+        Number of clusters.
+
+    n_init : int
+        Number of independent K-means runs.
+
+    rng : numpy.random.Generator
+        Random number generator for reproducible initialization.
+
+    init : str, default="kmeans++"
+        Initialization method: "kmeans++" or "random".
+
+    max_iter : int, default=100
+        Maximum number of Lloyd iterations per run.
+
+    Returns
+    -------
+    dict
+        mu    : Best cluster centroids.
+        z     : Best cluster assignments.
+        J     : Lowest final distortion.
+        all_J : Final distortions from all runs, in execution order.
+    """
+
+    # Validate the initialization method.
+    if init not in ("kmeans++", "random"):
+        raise ValueError("init must be 'kmeans++' or 'random'.")
+
+    # Validate the number of initializations.
+    if (
+        isinstance(n_init, (bool, np.bool_))
+        or not isinstance(n_init, (int, np.integer))
+        or n_init < 1
+    ):
+        raise ValueError("n_init must be a positive integer.")
+
+    # Convert the dataset into a floating-point NumPy array.
+    X = np.asarray(X, dtype=float)
+
+    if X.ndim != 2:
+        raise ValueError("X must be a two-dimensional array.")
+
+    N = X.shape[0]
+
+    if N == 0:
+        raise ValueError("X must contain at least one observation.")
+
+    # Store the final distortion from every run.
+    all_J = []
+
+    # Initialize the best solution.
+    best_mu = None
+    best_z = None
+    best_J = np.inf
+
+    # Run K-means from multiple initializations.
+    for _ in range(n_init):
+
+        # Select initial cluster centres.
+        if init == "kmeans++":
+
+            mu0 = kmeanspp_init(X, K, rng)
+
+        else:
+
+            # Randomly select K distinct observations.
+            indices = rng.choice(
+                N,
+                size=K,
+                replace=False
+            )
+
+            mu0 = X[indices].copy()
+
+        # Run Lloyd's K-means algorithm.
+        mu, z, history = kmeans_lloyd(
+            X,
+            mu0,
+            max_iter=max_iter
+        )
+
+        # Obtain the final distortion of the current run.
+        J = float(history[-1])
+
+        # Record the distortion of this run.
+        all_J.append(J)
+
+        # Keep the solution with the lowest distortion.
+        # Strict comparison preserves the earlier run when tied.
+        if J < best_J:
+
+            best_J = J
+            best_mu = mu.copy()
+            best_z = z.copy()
+
+    # Return the best solution and the distortions of all runs.
+    return {
+        "mu": best_mu,
+        "z": best_z,
+        "J": float(best_J),
+        "all_J": all_J
+    }
+
