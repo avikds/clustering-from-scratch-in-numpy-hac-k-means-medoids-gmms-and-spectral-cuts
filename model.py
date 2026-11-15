@@ -2896,3 +2896,188 @@ def fit_gmm(X, K, cov_type="full", rng=None, n_init=1,
 
     return best_result
 
+# Step 21 - em_kmeans_limit
+def em_kmeans_limit(X, mu0, sigma=None, max_iter=100):
+    """
+    Run EM on a Gaussian mixture with fixed equal mixing weights
+    and fixed isotropic covariance matrices, updating only means.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Input dataset containing N observations and D features.
+
+    mu0 : array-like of shape (K, D)
+        Initial component means.
+
+    sigma : float or None, default=None
+        Standard deviation of the fixed isotropic Gaussian components.
+
+        If None:
+            Uses sigma = 1 and hard (one-hot) responsibilities.
+
+        Otherwise:
+            Uses soft responsibilities with the specified sigma.
+
+    max_iter : int, default=100
+        Maximum number of EM iterations.
+
+    Returns
+    -------
+    mu : numpy.ndarray of shape (K, D)
+        Final component means.
+
+    z : numpy.ndarray of shape (N,)
+        Final cluster assignments based on maximum responsibility.
+    """
+
+    # Convert inputs into floating-point NumPy arrays.
+    X = np.asarray(X, dtype=float)
+    mu = np.array(mu0, dtype=float, copy=True)
+
+    # ---------------------------------------------------------
+    # 1. Validate inputs
+    # ---------------------------------------------------------
+
+    if X.ndim != 2 or mu.ndim != 2:
+        raise ValueError("X and mu0 must be two-dimensional arrays.")
+
+    N, D = X.shape
+    K = mu.shape[0]
+
+    if N == 0 or D == 0 or K == 0:
+        raise ValueError("X and mu0 must contain observations and components.")
+
+    if mu.shape[1] != D:
+        raise ValueError("X and mu0 must have the same number of features.")
+
+    if (
+        isinstance(max_iter, (bool, np.bool_))
+        or not isinstance(max_iter, (int, np.integer))
+        or max_iter < 0
+    ):
+        raise ValueError("max_iter must be a non-negative integer.")
+
+    # ---------------------------------------------------------
+    # 2. Configure the fixed Gaussian mixture
+    # ---------------------------------------------------------
+
+    # Hard EM uses unit standard deviation.
+    # Soft EM uses the supplied standard deviation.
+    hard_mode = sigma is None
+
+    if hard_mode:
+        sigma_value = 1.0
+    else:
+        try:
+            sigma_value = float(sigma)
+        except (TypeError, ValueError):
+            raise ValueError("sigma must be a positive finite scalar.")
+
+        if not np.isfinite(sigma_value) or sigma_value <= 0:
+            raise ValueError("sigma must be a positive finite scalar.")
+
+    # Keep the mixing weights fixed and uniform.
+    pi = np.full(K, 1.0 / K)
+
+    # Construct fixed isotropic covariance matrices:
+    # Sigma_k = sigma^2 * I for every component.
+    Sigma = np.tile(
+        (sigma_value ** 2) * np.eye(D),
+        (K, 1, 1)
+    )
+
+    # ---------------------------------------------------------
+    # 3. Perform EM iterations
+    # ---------------------------------------------------------
+
+    for iteration in range(max_iter):
+
+        # E-step: calculate posterior responsibilities and log-likelihood.
+        r, _ = gmm_e_step(
+            X,
+            pi,
+            mu,
+            Sigma
+        )
+
+        # In hard EM, replace each responsibility row with
+        # a one-hot vector at its maximum-probability component.
+        if hard_mode:
+
+            z_current = np.argmax(r, axis=1)
+
+            r = np.zeros((N, K), dtype=float)
+            r[np.arange(N), z_current] = 1.0
+
+        # Calculate the effective membership of each component.
+        component_mass = np.sum(r, axis=0)
+
+        # Preserve the current means for the convergence check.
+        old_mu = mu.copy()
+
+        # M-step: update means using the existing GMM M-step.
+        # The covariance and mixing-weight outputs are intentionally ignored.
+        _, new_mu, _ = gmm_m_step(
+            X,
+            r,
+            cov_type="full",
+            reg=0.0
+        )
+
+        # Components with almost zero responsibility retain
+        # their previous means.
+        low_mass = component_mass < 1e-8
+        new_mu[low_mass] = old_mu[low_mass]
+
+        # -----------------------------------------------------
+        # 4. Check convergence
+        # -----------------------------------------------------
+
+        if hard_mode:
+
+            # Hard EM requires exact equality of the means.
+            unchanged = np.array_equal(new_mu, old_mu)
+
+        else:
+
+            # Soft EM uses an absolute tolerance of 1e-9.
+            unchanged = np.allclose(
+                new_mu,
+                old_mu,
+                rtol=0.0,
+                atol=1e-9
+            )
+
+        # Update the means.
+        mu = new_mu
+
+        # Stop when the means have converged.
+        if unchanged:
+            break
+
+    # ---------------------------------------------------------
+    # 5. Compute final assignments using the final means
+    # ---------------------------------------------------------
+
+    # Recalculate responsibilities so they correspond exactly
+    # to the returned final means.
+    r_final, _ = gmm_e_step(
+        X,
+        pi,
+        mu,
+        Sigma
+    )
+
+    # Apply hard responsibilities when sigma is None.
+    if hard_mode:
+
+        z = np.argmax(r_final, axis=1).astype(int)
+
+    else:
+
+        # Return the maximum-posterior component for each observation.
+        z = np.argmax(r_final, axis=1).astype(int)
+
+    return mu, z
+
