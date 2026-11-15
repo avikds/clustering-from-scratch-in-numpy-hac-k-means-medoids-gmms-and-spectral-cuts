@@ -4240,3 +4240,240 @@ def best_bipartition(W, objective="ncut"):
 
     return best_labels, float(best_value)
 
+# Step 29 - fit_bernoulli_mixture
+def fit_bernoulli_mixture(X, K, rng, n_init=1, max_iter=100,
+                          tol=1e-4, eps=1e-3):
+    """
+    Fit a mixture of independent Bernoulli distributions using EM.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Binary dataset containing only 0s and 1s.
+
+    K : int
+        Number of Bernoulli mixture components.
+
+    rng : numpy.random.Generator
+        Random number generator for reproducible initialization.
+
+    n_init : int, default=1
+        Number of independent EM restarts.
+
+    max_iter : int, default=100
+        Maximum number of EM iterations per restart.
+
+    tol : float, default=1e-4
+        Convergence tolerance, scaled by the number of observations.
+
+    eps : float, default=1e-3
+        Probability clipping threshold for numerical stability.
+
+    Returns
+    -------
+    dict
+        pi      : Mixture weights of shape (K,).
+        mu      : Bernoulli probabilities of shape (K, D).
+        r       : Responsibilities of shape (N, K).
+        z       : Hard cluster assignments of shape (N,).
+        ll      : Final log-likelihood.
+        history : Log-likelihood values from the best restart.
+    """
+
+    # Convert the dataset into a floating-point NumPy array.
+    X = np.asarray(X, dtype=float)
+
+    # ---------------------------------------------------------
+    # 1. Validate the inputs
+    # ---------------------------------------------------------
+
+    if X.ndim != 2:
+        raise ValueError("X must be a two-dimensional array.")
+
+    N, D = X.shape
+
+    if N == 0 or D == 0:
+        raise ValueError("X must contain observations and features.")
+
+    # Bernoulli observations must contain only zeros and ones.
+    if not np.all((X == 0) | (X == 1)):
+        raise ValueError("X must contain only binary values (0 and 1).")
+
+    if (
+        isinstance(K, (bool, np.bool_))
+        or not isinstance(K, (int, np.integer))
+        or not 1 <= K <= N
+    ):
+        raise ValueError("K must be an integer between 1 and N.")
+
+    if (
+        isinstance(n_init, (bool, np.bool_))
+        or not isinstance(n_init, (int, np.integer))
+        or n_init < 1
+    ):
+        raise ValueError("n_init must be a positive integer.")
+
+    if (
+        isinstance(max_iter, (bool, np.bool_))
+        or not isinstance(max_iter, (int, np.integer))
+        or max_iter < 1
+    ):
+        raise ValueError("max_iter must be a positive integer.")
+
+    if not np.isfinite(tol) or tol < 0:
+        raise ValueError("tol must be a non-negative finite number.")
+
+    if not np.isfinite(eps) or not 0 < eps < 0.5:
+        raise ValueError("eps must be between 0 and 0.5.")
+
+    # ---------------------------------------------------------
+    # 2. Initialize storage for the best restart
+    # ---------------------------------------------------------
+
+    best_result = None
+    best_ll = -np.inf
+
+    # ---------------------------------------------------------
+    # 3. Perform independent EM restarts
+    # ---------------------------------------------------------
+
+    for restart in range(n_init):
+
+        # -----------------------------------------------------
+        # 3.1 Initialize Bernoulli probabilities using K-means++
+        # -----------------------------------------------------
+
+        # Select initial centres using the previously implemented
+        # K-means++ initialization.
+        mu = kmeanspp_init(X, K, rng)
+
+        # Convert the initial binary centres into valid Bernoulli
+        # probabilities.
+        mu = np.clip(mu, 0.25, 0.75)
+
+        # Initialize all mixture components with equal weights.
+        pi = np.full(K, 1.0 / K, dtype=float)
+
+        # Store log-likelihood after every E-step.
+        history = []
+
+        # -----------------------------------------------------
+        # 4. Perform the EM algorithm
+        # -----------------------------------------------------
+
+        for iteration in range(max_iter):
+
+            # -------------------------------------------------
+            # 4.1 E-step: Calculate responsibilities in log space
+            # -------------------------------------------------
+
+            # Calculate log mixture weights.
+            log_pi = np.log(pi)
+
+            # Calculate the logarithms of Bernoulli probabilities.
+            log_mu = np.log(mu)
+            log_one_minus_mu = np.log1p(-mu)
+
+            # Calculate the log joint probability:
+            #
+            # log p(x_n, z_n=k) =
+            # log(pi_k) + sum_d [
+            #     x_nd * log(mu_kd)
+            #     + (1-x_nd) * log(1-mu_kd)
+            # ]
+            log_joint = (
+                log_pi[np.newaxis, :]
+                + X @ log_mu.T
+                + (1.0 - X) @ log_one_minus_mu.T
+            )
+
+            # Use log-sum-exp normalization for numerical stability.
+            row_max = np.max(
+                log_joint,
+                axis=1,
+                keepdims=True
+            )
+
+            log_normalizer = row_max + np.log(
+                np.sum(
+                    np.exp(log_joint - row_max),
+                    axis=1,
+                    keepdims=True
+                )
+            )
+
+            # Normalize the log probabilities into responsibilities.
+            r = np.exp(log_joint - log_normalizer)
+
+            # Calculate the total log-likelihood.
+            ll = float(np.sum(log_normalizer))
+
+            # Append the current log-likelihood to the history.
+            history.append(ll)
+
+            # -------------------------------------------------
+            # 4.2 Check convergence
+            # -------------------------------------------------
+
+            # Stop if the latest log-likelihood gain is smaller
+            # than the specified tolerance multiplied by N.
+            if (
+                len(history) >= 2
+                and history[-1] - history[-2] < tol * N
+            ):
+                break
+
+            # -------------------------------------------------
+            # 4.3 M-step: Update mixture weights and probabilities
+            # -------------------------------------------------
+
+            # Calculate the effective membership of each component.
+            # The small constant prevents division by zero.
+            Nk = np.sum(r, axis=0) + 1e-10
+
+            # Update the mixture weights.
+            pi = Nk / np.sum(Nk)
+
+            # Update the Bernoulli probabilities using
+            # responsibility-weighted feature averages.
+            mu = (r.T @ X) / Nk[:, np.newaxis]
+
+            # Prevent probabilities from becoming exactly 0 or 1.
+            mu = np.clip(
+                mu,
+                eps,
+                1.0 - eps
+            )
+
+        # -----------------------------------------------------
+        # 5. Calculate final hard cluster assignments
+        # -----------------------------------------------------
+
+        # Assign each observation to its most probable component.
+        # np.argmax resolves ties in favour of the lowest index.
+        z = np.argmax(r, axis=1).astype(int)
+
+        # The final log-likelihood is the last history entry.
+        final_ll = float(history[-1])
+
+        # -----------------------------------------------------
+        # 6. Retain the best restart
+        # -----------------------------------------------------
+
+        # Strict comparison preserves the earlier restart
+        # when two restarts have equal log-likelihoods.
+        if final_ll > best_ll:
+
+            best_ll = final_ll
+
+            best_result = {
+                "pi": pi.copy(),
+                "mu": mu.copy(),
+                "r": r.copy(),
+                "z": z.copy(),
+                "ll": final_ll,
+                "history": history.copy()
+            }
+
+    return best_result
+

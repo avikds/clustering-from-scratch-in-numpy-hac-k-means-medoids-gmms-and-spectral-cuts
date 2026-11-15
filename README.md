@@ -38,6 +38,7 @@ python scaffold.py
 - [x] **26.** graph_laplacians
 - [x] **27.** spectral_clustering
 - [x] **28.** ncut_value
+- [x] **29.** fit_bernoulli_mixture
 
 ---
 
