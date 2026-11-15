@@ -3081,3 +3081,166 @@ def em_kmeans_limit(X, mu0, sigma=None, max_iter=100):
 
     return mu, z
 
+# Step 22 - bic_score
+def gmm_n_params(K, D, cov_type="full"):
+    """
+    Calculate the number of free parameters in a Gaussian Mixture Model.
+
+    Parameters
+    ----------
+    K : int
+        Number of Gaussian components.
+
+    D : int
+        Number of features.
+
+    cov_type : str, default="full"
+        Covariance structure:
+            - "full"
+            - "tied"
+            - "diag"
+            - "spherical"
+
+    Returns
+    -------
+    int
+        Total number of free model parameters, including:
+            - Component means
+            - Mixture weights
+            - Covariance parameters
+    """
+
+    # Validate the covariance type.
+    valid_types = ("full", "tied", "diag", "spherical")
+
+    if cov_type not in valid_types:
+        raise ValueError(
+            "cov_type must be 'full', 'tied', 'diag', or 'spherical'."
+        )
+
+    # Validate the number of components and features.
+    if (
+        isinstance(K, (bool, np.bool_))
+        or not isinstance(K, (int, np.integer))
+        or K < 1
+    ):
+        raise ValueError("K must be a positive integer.")
+
+    if (
+        isinstance(D, (bool, np.bool_))
+        or not isinstance(D, (int, np.integer))
+        or D < 1
+    ):
+        raise ValueError("D must be a positive integer.")
+
+    # ---------------------------------------------------------
+    # 1. Parameters for component means
+    # ---------------------------------------------------------
+
+    # Each of the K components has a D-dimensional mean vector.
+    mean_params = K * D
+
+    # ---------------------------------------------------------
+    # 2. Parameters for mixture weights
+    # ---------------------------------------------------------
+
+    # Since all K mixture weights must sum to 1,
+    # only K - 1 weights are independent.
+    weight_params = K - 1
+
+    # ---------------------------------------------------------
+    # 3. Parameters for covariance matrices
+    # ---------------------------------------------------------
+
+    if cov_type == "full":
+
+        # Each component has an independent full symmetric covariance.
+        # A symmetric D x D matrix has D*(D+1)/2 free parameters.
+        covariance_params = K * D * (D + 1) // 2
+
+    elif cov_type == "tied":
+
+        # All components share one full covariance matrix.
+        covariance_params = D * (D + 1) // 2
+
+    elif cov_type == "diag":
+
+        # Each component has D independent diagonal variances.
+        covariance_params = K * D
+
+    else:
+
+        # Each component has one spherical variance.
+        covariance_params = K
+
+    # Calculate the total number of free parameters.
+    total_params = (
+        mean_params
+        + weight_params
+        + covariance_params
+    )
+
+    return int(total_params)
+
+
+def bic_score(ll, K, D, N, cov_type="full"):
+    """
+    Calculate the Bayesian Information Criterion (BIC)
+    for a fitted Gaussian Mixture Model.
+
+    Higher BIC values indicate a better model under
+    this scoring convention.
+
+    Parameters
+    ----------
+    ll : float
+        Log-likelihood of the fitted GMM.
+
+    K : int
+        Number of Gaussian components.
+
+    D : int
+        Number of features.
+
+    N : int
+        Number of observations.
+
+    cov_type : str, default="full"
+        Covariance structure:
+            - "full"
+            - "tied"
+            - "diag"
+            - "spherical"
+
+    Returns
+    -------
+    float
+        BIC score calculated as:
+
+        BIC = ll - 0.5 * number_of_parameters * log(N)
+    """
+
+    # Validate the number of observations.
+    if (
+        isinstance(N, (bool, np.bool_))
+        or not isinstance(N, (int, np.integer))
+        or N < 1
+    ):
+        raise ValueError("N must be a positive integer.")
+
+    # Calculate the number of free GMM parameters.
+    n_params = gmm_n_params(
+        K,
+        D,
+        cov_type
+    )
+
+    # Calculate the BIC score.
+    # The logarithmic penalty discourages unnecessarily complex models.
+    score = (
+        float(ll)
+        - 0.5 * n_params * np.log(N)
+    )
+
+    return float(score)
+
