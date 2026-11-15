@@ -2334,3 +2334,149 @@ def pam(D, m0, max_iter=100):
 
     return m, z, history
 
+# Step 18 - gmm_e_step
+def gmm_e_step(X, pi, mu, Sigma):
+    """
+    Perform the Expectation (E) step of a Gaussian Mixture Model.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Input dataset containing N observations and D features.
+
+    pi : array-like of shape (K,)
+        Mixing coefficients of the K Gaussian components.
+
+    mu : array-like of shape (K, D)
+        Mean vectors of the K Gaussian components.
+
+    Sigma : array-like of shape (K, D, D) or (D, D)
+        Covariance matrices of the Gaussian components.
+        A single (D, D) matrix is also accepted as a shared covariance.
+
+    Returns
+    -------
+    r : numpy.ndarray of shape (N, K)
+        Responsibilities, where r[n, k] is the posterior probability
+        that observation n belongs to Gaussian component k.
+
+    ll : float
+        Total log-likelihood of the dataset under the GMM.
+    """
+
+    # Convert inputs into floating-point NumPy arrays.
+    X = np.asarray(X, dtype=float)
+    pi = np.asarray(pi, dtype=float)
+    mu = np.asarray(mu, dtype=float)
+    Sigma = np.asarray(Sigma, dtype=float)
+
+    # ---------------------------------------------------------
+    # 1. Validate input dimensions
+    # ---------------------------------------------------------
+
+    if X.ndim != 2:
+        raise ValueError("X must be a two-dimensional array.")
+
+    if pi.ndim != 1:
+        raise ValueError("pi must be a one-dimensional array.")
+
+    if mu.ndim != 2:
+        raise ValueError("mu must be a two-dimensional array.")
+
+    N, D = X.shape
+    K = len(pi)
+
+    if N == 0 or D == 0:
+        raise ValueError("X must contain observations and features.")
+
+    if K == 0 or mu.shape != (K, D):
+        raise ValueError("mu must have shape (K, D).")
+
+    if np.any(pi < 0) or not np.isclose(np.sum(pi), 1.0):
+        raise ValueError("Mixing coefficients must be non-negative and sum to 1.")
+
+    # Accept a single shared covariance matrix or one matrix per component.
+    if Sigma.ndim == 2:
+        if Sigma.shape != (D, D):
+            raise ValueError("Shared covariance must have shape (D, D).")
+
+        Sigma = np.broadcast_to(Sigma, (K, D, D))
+
+    elif Sigma.ndim != 3 or Sigma.shape != (K, D, D):
+        raise ValueError("Sigma must have shape (K, D, D) or (D, D).")
+
+    # ---------------------------------------------------------
+    # 2. Calculate log probabilities for every component
+    # ---------------------------------------------------------
+
+    # Store log(pi_k) + log N(x_n | mu_k, Sigma_k).
+    log_joint = np.empty((N, K), dtype=float)
+
+    # Constant term of the multivariate Gaussian log-density.
+    log_constant = D * np.log(2.0 * np.pi)
+
+    for k in range(K):
+
+        # A zero mixing coefficient gives a log probability of -infinity.
+        if pi[k] == 0.0:
+            log_joint[:, k] = -np.inf
+            continue
+
+        # Cholesky decomposition:
+        # Sigma_k = L @ L.T
+        L = np.linalg.cholesky(Sigma[k])
+
+        # Calculate the log determinant using the Cholesky factor.
+        # log|Sigma_k| = 2 * sum(log(diag(L))).
+        log_det = 2.0 * np.sum(np.log(np.diag(L)))
+
+        # Calculate the difference between observations and mean.
+        diff = X - mu[k]
+
+        # Solve L @ y = (x_n - mu_k) for all observations.
+        # This avoids explicitly calculating the inverse covariance.
+        whitened = np.linalg.solve(L, diff.T)
+
+        # Squared Mahalanobis distances:
+        # (x_n - mu_k).T @ Sigma_k^(-1) @ (x_n - mu_k)
+        mahalanobis = np.sum(whitened ** 2, axis=0)
+
+        # Calculate the Gaussian log-density including the
+        # component's mixing coefficient.
+        log_joint[:, k] = (
+            np.log(pi[k])
+            - 0.5 * (
+                log_constant
+                + log_det
+                + mahalanobis
+            )
+        )
+
+    # ---------------------------------------------------------
+    # 3. Normalize responsibilities using log-sum-exp
+    # ---------------------------------------------------------
+
+    # Find the maximum log probability in each observation's row.
+    row_max = np.max(log_joint, axis=1, keepdims=True)
+
+    # Calculate log-sum-exp in a numerically stable manner.
+    log_normalizer = row_max + np.log(
+        np.sum(
+            np.exp(log_joint - row_max),
+            axis=1,
+            keepdims=True
+        )
+    )
+
+    # Convert normalized log probabilities into responsibilities.
+    r = np.exp(log_joint - log_normalizer)
+
+    # ---------------------------------------------------------
+    # 4. Calculate the total log-likelihood
+    # ---------------------------------------------------------
+
+    # The dataset log-likelihood is the sum of the log normalizers.
+    ll = float(np.sum(log_normalizer))
+
+    return r, ll
+

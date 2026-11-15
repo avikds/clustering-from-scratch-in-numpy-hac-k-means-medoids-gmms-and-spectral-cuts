@@ -27,6 +27,7 @@ python scaffold.py
 - [x] **15.** edit_distance_matrix
 - [x] **16.** kmedoids_voronoi
 - [x] **17.** pam
+- [x] **18.** gmm_e_step
 
 ---
 
