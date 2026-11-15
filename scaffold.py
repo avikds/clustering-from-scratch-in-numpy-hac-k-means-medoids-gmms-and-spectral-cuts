@@ -19,7 +19,7 @@ import time
 import numpy as np
 from sklearn.datasets import load_digits, load_iris, load_wine
 
-from solution import (pairwise_distances, contingency_table, pair_counts, cluster_scores, agglomerate, cut_tree,
+from model import (pairwise_distances, contingency_table, pair_counts, cluster_scores, agglomerate, cut_tree,
                       single_link_mst, same_hierarchy, max_diameter, linkage_report, assign_clusters, kmeans_lloyd,
                       kmeanspp_init, kmeans_restarts, vq_bits, block_vq, edit_distance, edit_distance_matrix,
                       kmedoids_voronoi, pam, gmm_e_step, gmm_m_step, fit_gmm, em_kmeans_limit, gmm_n_params, bic_score,
