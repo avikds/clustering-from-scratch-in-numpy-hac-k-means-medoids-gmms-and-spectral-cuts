@@ -3244,3 +3244,160 @@ def bic_score(ll, K, D, N, cov_type="full"):
 
     return float(score)
 
+# Step 23 - silhouette_samples
+def silhouette_samples(D, labels):
+    """
+    Compute the silhouette coefficient for every observation
+    using a precomputed pairwise dissimilarity matrix.
+
+    Parameters
+    ----------
+    D : array-like of shape (N, N)
+        Pairwise dissimilarity matrix.
+
+    labels : array-like of shape (N,)
+        Cluster assignments. Labels may be arbitrary values.
+
+    Returns
+    -------
+    scores : numpy.ndarray of shape (N,)
+        Silhouette coefficient for every observation.
+
+        Singleton clusters receive a score of 0.
+        Observations with a zero denominator also receive a score of 0.
+    """
+
+    # Convert inputs into NumPy arrays.
+    D = np.asarray(D, dtype=float)
+    labels = np.asarray(labels)
+
+    # Validate input dimensions.
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("D must be a square two-dimensional matrix.")
+
+    if labels.ndim != 1:
+        raise ValueError("labels must be a one-dimensional array.")
+
+    N = D.shape[0]
+
+    if len(labels) != N:
+        raise ValueError("D and labels must contain the same number of observations.")
+
+    # Obtain distinct cluster labels and map them to consecutive indices.
+    unique_labels, inverse = np.unique(
+        labels,
+        return_inverse=True
+    )
+
+    n_clusters = len(unique_labels)
+
+    # Silhouette coefficients require at least two distinct clusters.
+    if n_clusters < 2:
+        raise ValueError("At least two clusters are required.")
+
+    # ---------------------------------------------------------
+    # 1. Calculate cluster sizes and mean dissimilarities
+    # ---------------------------------------------------------
+
+    cluster_sizes = np.bincount(
+        inverse,
+        minlength=n_clusters
+    )
+
+    # Store the sum of dissimilarities from every observation
+    # to every cluster.
+    cluster_sums = np.empty(
+        (N, n_clusters),
+        dtype=float
+    )
+
+    # Process one cluster at a time.
+    # This avoids loops over individual observations.
+    for k in range(n_clusters):
+
+        # Find observations belonging to the current cluster.
+        members = np.flatnonzero(inverse == k)
+
+        # Sum dissimilarities from every observation
+        # to all members of this cluster.
+        cluster_sums[:, k] = np.sum(
+            D[:, members],
+            axis=1
+        )
+
+    # Calculate the mean dissimilarity from every observation
+    # to every cluster.
+    mean_distances = cluster_sums / cluster_sizes[np.newaxis, :]
+
+    # Store the diagonal distances for correctly excluding
+    # each observation from its own intra-cluster calculation.
+    diagonal = np.diag(D)
+
+    # Initialize all silhouette coefficients to zero.
+    scores = np.zeros(N, dtype=float)
+
+    # ---------------------------------------------------------
+    # 2. Calculate silhouette coefficients cluster by cluster
+    # ---------------------------------------------------------
+
+    for k in range(n_clusters):
+
+        # Find the observations belonging to cluster k.
+        members = np.flatnonzero(inverse == k)
+
+        cluster_size = len(members)
+
+        # A singleton cluster receives a silhouette score of zero.
+        if cluster_size == 1:
+            continue
+
+        # -----------------------------------------------------
+        # 2.1 Calculate intra-cluster dissimilarity (a_i)
+        # -----------------------------------------------------
+
+        # Exclude the observation's self-distance and calculate
+        # the mean dissimilarity to the remaining cluster members.
+        a = (
+            cluster_sums[members, k] - diagonal[members]
+        ) / (cluster_size - 1)
+
+        # -----------------------------------------------------
+        # 2.2 Calculate nearest-other-cluster dissimilarity (b_i)
+        # -----------------------------------------------------
+
+        # Identify all clusters except the current cluster.
+        other_clusters = np.flatnonzero(
+            np.arange(n_clusters) != k
+        )
+
+        # Find the smallest mean dissimilarity to another cluster.
+        b = np.min(
+            mean_distances[np.ix_(members, other_clusters)],
+            axis=1
+        )
+
+        # -----------------------------------------------------
+        # 2.3 Calculate silhouette coefficients
+        # -----------------------------------------------------
+
+        denominator = np.maximum(a, b)
+
+        # Calculate the silhouette values separately.
+        # A zero denominator produces a score of zero.
+        local_scores = np.zeros(cluster_size, dtype=float)
+
+        np.divide(
+            b - a,
+            denominator,
+            out=local_scores,
+            where=denominator > 0
+        )
+
+        # IMPORTANT:
+        # Explicitly assign the calculated values back to the
+        # original scores array. This avoids the advanced-indexing
+        # copy issue associated with scores[members] in np.divide.
+        scores[members] = local_scores
+
+    return scores
+

@@ -32,6 +32,7 @@ python scaffold.py
 - [x] **20.** fit_gmm
 - [x] **21.** em_kmeans_limit
 - [x] **22.** bic_score
+- [x] **23.** silhouette_samples
 
 ---
 
