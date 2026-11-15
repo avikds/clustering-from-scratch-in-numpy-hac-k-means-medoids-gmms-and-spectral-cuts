@@ -991,3 +991,88 @@ def single_link_mst(D):
 
     return Z
 
+# Step 8 - same_hierarchy
+def same_hierarchy(Z1, Z2):
+    """
+    Determine whether two hierarchical clustering linkage matrices
+    describe the same family of clusters, ignoring merge heights,
+    merge order, and intermediate cluster IDs.
+
+    Parameters
+    ----------
+    Z1 : array-like of shape (N - 1, 4)
+        First linkage matrix.
+
+    Z2 : array-like of shape (N - 1, 4)
+        Second linkage matrix.
+
+    Returns
+    -------
+    bool
+        True if both linkage matrices create the same family of clusters,
+        otherwise False.
+    """
+
+    # Convert both linkage matrices into NumPy arrays.
+    Z1 = np.asarray(Z1)
+    Z2 = np.asarray(Z2)
+
+    # Validate the dimensions of both linkage matrices.
+    if Z1.ndim != 2 or Z1.shape[1] != 4:
+        raise ValueError("Z1 must have shape (N - 1, 4).")
+
+    if Z2.ndim != 2 or Z2.shape[1] != 4:
+        raise ValueError("Z2 must have shape (N - 1, 4).")
+
+    # Both trees must describe the same number of original observations.
+    if Z1.shape[0] != Z2.shape[0]:
+        return False
+
+    # Infer the number of original observations.
+    n = Z1.shape[0] + 1
+
+    def get_clusters(Z):
+        """
+        Reconstruct the family of clusters created by a linkage matrix.
+
+        Each cluster is represented by a frozenset of original
+        observation indices.
+        """
+
+        # Initially, every observation is its own cluster.
+        members = {
+            i: frozenset([i])
+            for i in range(n)
+        }
+
+        # Store all clusters created by the merges.
+        clusters = set()
+
+        # Process merges in chronological order.
+        for t, row in enumerate(Z):
+
+            # Retrieve the two cluster IDs being merged.
+            a = int(row[0])
+            b = int(row[1])
+
+            # Combine the original observations belonging to both clusters.
+            merged_cluster = members[a] | members[b]
+
+            # The newly created cluster receives ID N + t.
+            new_id = n + t
+
+            # Store the membership of the newly created cluster.
+            members[new_id] = merged_cluster
+
+            # Record this cluster independently of its numerical ID.
+            clusters.add(merged_cluster)
+
+        return clusters
+
+    # Reconstruct the cluster families for both linkage matrices.
+    clusters1 = get_clusters(Z1)
+    clusters2 = get_clusters(Z2)
+
+    # Two hierarchical trees are equivalent if their cluster families match.
+    return clusters1 == clusters2
+
