@@ -157,3 +157,64 @@ def pairwise_distances(X, metric="euclidean"):
 
     return D
 
+# Step 2 - contingency_table
+def contingency_table(labels_pred, labels_true):
+    """
+    Construct a contingency table showing the overlap between
+    predicted cluster labels and true class labels.
+
+    Parameters
+    ----------
+    labels_pred : array-like of shape (N,)
+        Predicted cluster labels.
+
+    labels_true : array-like of shape (N,)
+        Ground-truth class labels.
+
+    Returns
+    -------
+    N : numpy.ndarray of shape (n_pred, n_true)
+        Integer contingency table where N[i, j] represents
+        the number of observations belonging to predicted
+        cluster i and true class j.
+
+        Rows and columns correspond to sorted distinct labels.
+    """
+
+    # Convert inputs into NumPy arrays.
+    labels_pred = np.asarray(labels_pred)
+    labels_true = np.asarray(labels_true)
+
+    # Ensure both inputs are one-dimensional label arrays.
+    if labels_pred.ndim != 1 or labels_true.ndim != 1:
+        raise ValueError("Both label arrays must be one-dimensional.")
+
+    # Both label arrays must contain the same number of observations.
+    if len(labels_pred) != len(labels_true):
+        raise ValueError("Both label arrays must have the same length.")
+
+    # Obtain sorted unique predicted labels and their corresponding indices.
+    pred_labels, pred_indices = np.unique(
+        labels_pred,
+        return_inverse=True
+    )
+
+    # Obtain sorted unique true labels and their corresponding indices.
+    true_labels, true_indices = np.unique(
+        labels_true,
+        return_inverse=True
+    )
+
+    # Determine the number of predicted clusters and true classes.
+    n_pred = len(pred_labels)
+    n_true = len(true_labels)
+
+    # Initialize the contingency table with integer zeros.
+    N = np.zeros((n_pred, n_true), dtype=int)
+
+    # Count the occurrences of each predicted-cluster / true-class pair.
+    # np.add.at handles repeated indices correctly.
+    np.add.at(N, (pred_indices, true_indices), 1)
+
+    return N
+
