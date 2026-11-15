@@ -1234,3 +1234,183 @@ def linkage_report(D, K):
 
     return report
 
+# Step 10 - kmeans_lloyd
+def assign_clusters(X, mu):
+    """
+    Assign each observation to its nearest cluster centroid
+    and calculate the total K-means distortion.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Input dataset containing N observations and D features.
+
+    mu : array-like of shape (K, D)
+        Current cluster centroids.
+
+    Returns
+    -------
+    z : numpy.ndarray of shape (N,)
+        Integer cluster assignments. Ties are assigned to
+        the centroid with the lowest index.
+
+    J : float
+        Total K-means distortion, calculated as the sum
+        of squared Euclidean distances to assigned centroids.
+    """
+
+    # Convert inputs to floating-point NumPy arrays.
+    X = np.asarray(X, dtype=float)
+    mu = np.asarray(mu, dtype=float)
+
+    # Validate the input dimensions.
+    if X.ndim != 2 or mu.ndim != 2:
+        raise ValueError("X and mu must be two-dimensional arrays.")
+
+    # Ensure that observations and centroids have matching features.
+    if X.shape[1] != mu.shape[1]:
+        raise ValueError("X and mu must have the same number of features.")
+
+    # At least one centroid is required for cluster assignment.
+    if mu.shape[0] == 0:
+        raise ValueError("mu must contain at least one centroid.")
+
+    # Calculate squared Euclidean distances between every observation
+    # and every centroid using NumPy broadcasting.
+    squared_distances = np.sum(
+        (X[:, np.newaxis, :] - mu[np.newaxis, :, :]) ** 2,
+        axis=2
+    )
+
+    # Assign each observation to its nearest centroid.
+    # np.argmin selects the lowest centroid index when distances tie.
+    z = np.argmin(squared_distances, axis=1).astype(int)
+
+    # Extract the squared distance to each observation's assigned centroid.
+    assigned_distances = squared_distances[
+        np.arange(X.shape[0]),
+        z
+    ]
+
+    # Calculate the total within-cluster sum of squared distances.
+    J = float(np.sum(assigned_distances))
+
+    return z, J
+
+
+def kmeans_lloyd(X, mu0, max_iter=100):
+    """
+    Perform K-means clustering using Lloyd's alternating minimization.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Input dataset containing N observations and D features.
+
+    mu0 : array-like of shape (K, D)
+        Initial cluster centroids.
+
+    max_iter : int, default=100
+        Maximum number of assignment and centroid-update iterations.
+
+    Returns
+    -------
+    mu : numpy.ndarray of shape (K, D)
+        Final cluster centroids.
+
+    z : numpy.ndarray of shape (N,)
+        Final cluster assignments.
+
+    history : list of float
+        Distortion recorded after every assignment step.
+        Includes a final assignment if convergence is not reached
+        within max_iter iterations.
+    """
+
+    # Convert the dataset into a floating-point NumPy array.
+    X = np.asarray(X, dtype=float)
+
+    # Create an independent copy of the initial centroids.
+    # This ensures that mu0 is never modified.
+    mu = np.array(mu0, dtype=float, copy=True)
+
+    # Validate input dimensions.
+    if X.ndim != 2 or mu.ndim != 2:
+        raise ValueError("X and mu0 must be two-dimensional arrays.")
+
+    if X.shape[1] != mu.shape[1]:
+        raise ValueError("X and mu0 must have the same number of features.")
+
+    if mu.shape[0] == 0:
+        raise ValueError("At least one initial centroid is required.")
+
+    # Validate the maximum iteration count.
+    if (
+        isinstance(max_iter, (bool, np.bool_))
+        or not isinstance(max_iter, (int, np.integer))
+        or max_iter < 0
+    ):
+        raise ValueError("max_iter must be a non-negative integer.")
+
+    # Store the distortion after each assignment step.
+    history = []
+
+    # Keep track of the assignments from the previous iteration.
+    previous_z = None
+
+    # ---------------------------------------------------------
+    # Lloyd's alternating minimization
+    # ---------------------------------------------------------
+
+    for iteration in range(max_iter):
+
+        # Step 1: Assign observations to their nearest centroids
+        # and calculate the current distortion.
+        z, J = assign_clusters(X, mu)
+
+        # Record the distortion for this iteration.
+        history.append(J)
+
+        # Step 2: Check whether cluster assignments have converged.
+        # If assignments are unchanged, the algorithm has converged.
+        if (
+            previous_z is not None
+            and np.array_equal(z, previous_z)
+        ):
+            return mu, z, history
+
+        # Step 3: Update each centroid using the mean of its
+        # currently assigned observations.
+        #
+        # Start with a copy so empty clusters retain their old centres.
+        new_mu = mu.copy()
+
+        for k in range(mu.shape[0]):
+
+            # Identify observations assigned to cluster k.
+            cluster_points = X[z == k]
+
+            # Update the centroid only if the cluster is non-empty.
+            if len(cluster_points) > 0:
+
+                # Calculate the arithmetic mean of assigned observations.
+                new_mu[k] = np.mean(cluster_points, axis=0)
+
+        # Update the centroids for the next iteration.
+        mu = new_mu
+
+        # Save the current assignments for the convergence check.
+        previous_z = z.copy()
+
+    # ---------------------------------------------------------
+    # Final assignment when max_iter is reached
+    # ---------------------------------------------------------
+
+    # Perform one final assignment using the latest updated centroids.
+    z, J = assign_clusters(X, mu)
+
+    # Record the final distortion.
+    history.append(J)
+
+    return mu, z, history
+

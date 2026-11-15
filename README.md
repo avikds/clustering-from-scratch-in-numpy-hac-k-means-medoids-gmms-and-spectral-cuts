@@ -19,6 +19,7 @@ python scaffold.py
 - [x] **7.** single_link_mst
 - [x] **8.** same_hierarchy
 - [x] **9.** linkage_report
+- [x] **10.** kmeans_lloyd
 
 ---
 
