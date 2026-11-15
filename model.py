@@ -218,3 +218,82 @@ def contingency_table(labels_pred, labels_true):
 
     return N
 
+# Step 3 - pair_counts
+def pair_counts(N):
+    """
+    Calculate pairwise clustering agreement counts from a contingency table.
+
+    Parameters
+    ----------
+    N : array-like of shape (n_pred, n_true)
+        Contingency table where N[i, j] represents the number of
+        observations in predicted cluster i and true class j.
+
+    Returns
+    -------
+    tuple
+        (TP, FP, FN, TN), where all four values are Python integers.
+
+        TP: Pairs in the same predicted cluster and same true class.
+        FP: Pairs in the same predicted cluster but different true classes.
+        FN: Pairs in different predicted clusters but the same true class.
+        TN: Pairs in different predicted clusters and different true classes.
+    """
+
+    # Convert the contingency table into a NumPy array.
+    N = np.asarray(N)
+
+    # Ensure that the contingency table is two-dimensional.
+    if N.ndim != 2:
+        raise ValueError("N must be a two-dimensional contingency table.")
+
+    # Count the total number of pairs within each individual cell.
+    # These pairs belong to both the same predicted cluster
+    # and the same true class.
+    TP = sum(
+        int(n) * (int(n) - 1) // 2
+        for n in N.flat
+    )
+
+    # Calculate the row sums (total observations in each predicted cluster).
+    row_sums = [
+        sum(int(value) for value in row)
+        for row in N
+    ]
+
+    # Calculate the column sums (total observations in each true class).
+    col_sums = [
+        sum(int(value) for value in N[:, j])
+        for j in range(N.shape[1])
+    ]
+
+    # Count all pairs belonging to the same predicted cluster.
+    same_cluster_pairs = sum(
+        n * (n - 1) // 2
+        for n in row_sums
+    )
+
+    # Count all pairs belonging to the same true class.
+    same_class_pairs = sum(
+        n * (n - 1) // 2
+        for n in col_sums
+    )
+
+    # False positives: same predicted cluster, different true classes.
+    FP = same_cluster_pairs - TP
+
+    # False negatives: different predicted clusters, same true class.
+    FN = same_class_pairs - TP
+
+    # Calculate the total number of unordered pairs.
+    total_observations = sum(row_sums)
+    total_pairs = (
+        total_observations * (total_observations - 1) // 2
+    )
+
+    # True negatives: pairs that differ in both cluster and class.
+    TN = total_pairs - TP - FP - FN
+
+    # Return all counts as standard Python integers.
+    return (int(TP), int(FP), int(FN), int(TN))
+
