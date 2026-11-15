@@ -33,6 +33,7 @@ python scaffold.py
 - [x] **21.** em_kmeans_limit
 - [x] **22.** bic_score
 - [x] **23.** silhouette_samples
+- [x] **24.** k_selection_curves
 
 ---
 

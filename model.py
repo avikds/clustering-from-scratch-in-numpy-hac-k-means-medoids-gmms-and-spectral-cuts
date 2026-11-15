@@ -3401,3 +3401,192 @@ def silhouette_samples(D, labels):
 
     return scores
 
+# Step 24 - k_selection_curves
+def k_selection_curves(X_train, X_val, Ks, rng, n_init=5, cov_type="full"):
+    """
+    Compare validation distortion, BIC, and silhouette scores
+    across different numbers of clusters.
+
+    Parameters
+    ----------
+    X_train : array-like of shape (N, D)
+        Training dataset.
+
+    X_val : array-like of shape (N_val, D)
+        Validation dataset.
+
+    Ks : iterable
+        Number of clusters to evaluate, in the desired order.
+
+    rng : numpy.random.Generator
+        Shared random number generator for reproducible initialization.
+
+    n_init : int, default=5
+        Number of initialization attempts for K-means and GMM.
+
+    cov_type : str, default="full"
+        GMM covariance structure:
+            - "full"
+            - "tied"
+            - "diag"
+            - "spherical"
+
+    Returns
+    -------
+    dict
+        K              : List of evaluated cluster counts.
+        val_distortion : Validation distortion per observation.
+        bic            : BIC scores for fitted GMMs.
+        silhouette     : Mean silhouette scores for K-means.
+        pick           : Best K selected by each criterion.
+    """
+
+    # Convert datasets into floating-point NumPy arrays.
+    X_train = np.asarray(X_train, dtype=float)
+    X_val = np.asarray(X_val, dtype=float)
+
+    # Preserve the order of the requested cluster counts.
+    K_values = [int(k) for k in Ks]
+
+    # Validate the training and validation datasets.
+    if X_train.ndim != 2 or X_val.ndim != 2:
+        raise ValueError("X_train and X_val must be two-dimensional arrays.")
+
+    if X_train.shape[1] != X_val.shape[1]:
+        raise ValueError("Training and validation data must have the same features.")
+
+    if len(X_train) == 0 or len(X_val) == 0:
+        raise ValueError("Training and validation datasets must be non-empty.")
+
+    if not K_values:
+        raise ValueError("Ks must contain at least one cluster count.")
+
+    # ---------------------------------------------------------
+    # 1. Compute the training dissimilarity matrix exactly once
+    # ---------------------------------------------------------
+
+    # This matrix is reused for every silhouette calculation.
+    D_train = pairwise_distances(X_train)
+
+    # Determine the training dataset dimensions.
+    N, D = X_train.shape
+
+    # ---------------------------------------------------------
+    # 2. Initialize storage for evaluation scores
+    # ---------------------------------------------------------
+
+    val_distortions = []
+    bic_scores = []
+    silhouette_scores = []
+
+    # ---------------------------------------------------------
+    # 3. Evaluate every requested number of clusters
+    # ---------------------------------------------------------
+
+    for K in K_values:
+
+        # -----------------------------------------------------
+        # 3.1 Fit K-means using multiple restarts
+        # -----------------------------------------------------
+
+        km = kmeans_restarts(
+            X_train,
+            K,
+            n_init,
+            rng
+        )
+
+        # -----------------------------------------------------
+        # 3.2 Calculate validation distortion
+        # -----------------------------------------------------
+
+        # Assign validation observations to the nearest
+        # training centroids and calculate their total distortion.
+        _, validation_cost = assign_clusters(
+            X_val,
+            km["mu"]
+        )
+
+        # Normalize distortion by the number of validation observations.
+        val_distortion = float(
+            validation_cost / len(X_val)
+        )
+
+        val_distortions.append(val_distortion)
+
+        # -----------------------------------------------------
+        # 3.3 Calculate mean silhouette score
+        # -----------------------------------------------------
+
+        # Use the precomputed training dissimilarity matrix
+        # and the K-means training assignments.
+        sample_scores = silhouette_samples(
+            D_train,
+            km["z"]
+        )
+
+        # Store the average silhouette coefficient.
+        silhouette = float(np.mean(sample_scores))
+
+        silhouette_scores.append(silhouette)
+
+        # -----------------------------------------------------
+        # 3.4 Fit a Gaussian Mixture Model
+        # -----------------------------------------------------
+
+        gm = fit_gmm(
+            X_train,
+            K,
+            cov_type,
+            rng,
+            n_init
+        )
+
+        # -----------------------------------------------------
+        # 3.5 Calculate the BIC score
+        # -----------------------------------------------------
+
+        bic = bic_score(
+            gm["ll"],
+            K,
+            D,
+            N,
+            cov_type
+        )
+
+        bic_scores.append(float(bic))
+
+    # ---------------------------------------------------------
+    # 4. Select the best K for each criterion
+    # ---------------------------------------------------------
+
+    # np.argmin and np.argmax return the first occurrence
+    # when multiple values are tied.
+
+    # Lowest validation distortion is preferred.
+    best_val_idx = int(np.argmin(val_distortions))
+
+    # Highest BIC is preferred.
+    best_bic_idx = int(np.argmax(bic_scores))
+
+    # Highest silhouette score is preferred.
+    best_silhouette_idx = int(np.argmax(silhouette_scores))
+
+    pick = {
+        "val_distortion": K_values[best_val_idx],
+        "bic": K_values[best_bic_idx],
+        "silhouette": K_values[best_silhouette_idx]
+    }
+
+    # ---------------------------------------------------------
+    # 5. Return all evaluation results
+    # ---------------------------------------------------------
+
+    return {
+        "K": K_values,
+        "val_distortion": val_distortions,
+        "bic": bic_scores,
+        "silhouette": silhouette_scores,
+        "pick": pick
+    }
+
