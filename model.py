@@ -775,3 +775,219 @@ def cut_tree(Z, n_clusters=None, height=None):
 
     return labels
 
+# Step 7 - single_link_mst
+def single_link_mst(D):
+    """
+    Compute the single-link hierarchical clustering tree using
+    a Minimum Spanning Tree (MST).
+
+    Parameters
+    ----------
+    D : array-like of shape (N, N)
+        Symmetric pairwise dissimilarity matrix.
+
+    Returns
+    -------
+    Z : numpy.ndarray of shape (N - 1, 4)
+        Linkage matrix where each row contains:
+            [cluster_a, cluster_b, merge_height, cluster_size]
+
+        Original observations have IDs 0 to N-1.
+        The cluster created at step t has ID N+t.
+
+    Notes
+    -----
+    - Prim's algorithm constructs the MST in O(N^2) time.
+    - MST edges are processed in increasing order of weight.
+    - Union-Find constructs the merge tree.
+    - The input matrix D is not modified.
+    """
+
+    # Convert the input into a floating-point NumPy array.
+    D = np.asarray(D, dtype=float)
+
+    # Validate that the dissimilarity matrix is square.
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("D must be a square two-dimensional matrix.")
+
+    n = D.shape[0]
+
+    # Handle matrices containing zero or one observation.
+    if n <= 1:
+        return np.empty((0, 4), dtype=float)
+
+    # ---------------------------------------------------------
+    # 1. Construct the Minimum Spanning Tree using Prim's algorithm
+    # ---------------------------------------------------------
+
+    # Track which observations have already been added to the MST.
+    in_tree = np.zeros(n, dtype=bool)
+
+    # Store the minimum distance connecting each outside observation
+    # to the currently constructed MST.
+    best_distance = np.full(n, np.inf, dtype=float)
+
+    # Store the corresponding parent observation in the MST.
+    best_parent = np.full(n, -1, dtype=int)
+
+    # Start constructing the MST from observation 0.
+    best_distance[0] = 0.0
+
+    # Store the selected MST edges as (u, v, weight).
+    mst_edges = []
+
+    for _ in range(n):
+
+        # Find all observations that have not yet entered the MST.
+        candidates = np.flatnonzero(~in_tree)
+
+        # Select the observation with the smallest connection distance.
+        # np.argmin selects the first occurrence, ensuring deterministic ties.
+        v = int(candidates[np.argmin(best_distance[candidates])])
+
+        # Add the selected observation to the MST.
+        in_tree[v] = True
+
+        # Record its connecting edge, except for the initial root.
+        if best_parent[v] != -1:
+
+            u = int(best_parent[v])
+
+            # Store edge endpoints in ascending order.
+            edge_a, edge_b = sorted((u, v))
+
+            mst_edges.append(
+                (edge_a, edge_b, float(best_distance[v]))
+            )
+
+        # Update the cheapest connection for every observation
+        # that has not yet entered the MST.
+        outside = ~in_tree
+
+        candidate_distances = D[v, outside]
+        current_distances = best_distance[outside]
+        current_parents = best_parent[outside]
+
+        # Update when a strictly smaller connection is found.
+        better = candidate_distances < current_distances
+
+        # For equal weights, prefer the smaller parent ID.
+        tied_with_smaller_parent = (
+            (candidate_distances == current_distances)
+            & ((current_parents == -1) | (v < current_parents))
+        )
+
+        update = better | tied_with_smaller_parent
+
+        # Apply the updates to the corresponding observations.
+        outside_ids = np.flatnonzero(outside)
+        update_ids = outside_ids[update]
+
+        best_distance[update_ids] = D[v, update_ids]
+        best_parent[update_ids] = v
+
+    # ---------------------------------------------------------
+    # 2. Sort MST edges by increasing weight
+    # ---------------------------------------------------------
+
+    # Endpoint ordering provides deterministic tie-breaking
+    # when multiple MST edges have identical weights.
+    mst_edges.sort(
+        key=lambda edge: (edge[2], edge[0], edge[1])
+    )
+
+    # ---------------------------------------------------------
+    # 3. Initialize Union-Find (Disjoint Set Union)
+    # ---------------------------------------------------------
+
+    # Initially, every original observation belongs to its own component.
+    uf_parent = np.arange(n, dtype=int)
+
+    # Track the size of each Union-Find component.
+    uf_size = np.ones(n, dtype=int)
+
+    # Track the dendrogram cluster ID represented by each component root.
+    cluster_id = np.arange(n, dtype=int)
+
+    # Track the number of original observations in each dendrogram cluster.
+    cluster_sizes = np.ones(2 * n - 1, dtype=int)
+
+    def find(x):
+        """
+        Find the representative of a Union-Find component
+        using path compression.
+        """
+        while uf_parent[x] != x:
+            uf_parent[x] = uf_parent[uf_parent[x]]
+            x = uf_parent[x]
+
+        return x
+
+    # Allocate the final linkage matrix.
+    Z = np.empty((n - 1, 4), dtype=float)
+
+    merge_count = 0
+
+    # ---------------------------------------------------------
+    # 4. Process sorted MST edges using Union-Find
+    # ---------------------------------------------------------
+
+    for u, v, weight in mst_edges:
+
+        # Find the components containing the two edge endpoints.
+        root_u = find(u)
+        root_v = find(v)
+
+        # Ignore edges that already belong to the same component.
+        if root_u == root_v:
+            continue
+
+        # Retrieve the current dendrogram IDs of both components.
+        a = int(cluster_id[root_u])
+        b = int(cluster_id[root_v])
+
+        # Ensure that the smaller cluster ID comes first.
+        if a > b:
+            a, b = b, a
+
+        # Assign the ID of the newly created cluster.
+        new_id = n + merge_count
+
+        # Calculate the total number of observations in the new cluster.
+        new_size = int(cluster_sizes[a] + cluster_sizes[b])
+
+        # Record the merge in the linkage matrix.
+        Z[merge_count] = [
+            a,
+            b,
+            weight,
+            new_size
+        ]
+
+        # Update the new cluster's size.
+        cluster_sizes[new_id] = new_size
+
+        # -----------------------------------------------------
+        # 5. Union the two components by size
+        # -----------------------------------------------------
+
+        # Keep the larger component as the representative.
+        if uf_size[root_u] < uf_size[root_v]:
+            root_u, root_v = root_v, root_u
+
+        # Merge the smaller component into the larger component.
+        uf_parent[root_v] = root_u
+
+        uf_size[root_u] += uf_size[root_v]
+
+        # Associate the resulting component with the new cluster ID.
+        cluster_id[root_u] = new_id
+
+        merge_count += 1
+
+        # The MST contains exactly N-1 useful merging edges.
+        if merge_count == n - 1:
+            break
+
+    return Z
+
