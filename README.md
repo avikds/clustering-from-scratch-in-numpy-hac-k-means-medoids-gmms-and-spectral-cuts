@@ -20,6 +20,7 @@ python scaffold.py
 - [x] **8.** same_hierarchy
 - [x] **9.** linkage_report
 - [x] **10.** kmeans_lloyd
+- [x] **11.** kmeanspp_init
 
 ---
 

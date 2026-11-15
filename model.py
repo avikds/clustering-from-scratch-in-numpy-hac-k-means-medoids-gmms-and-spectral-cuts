@@ -1414,3 +1414,118 @@ def kmeans_lloyd(X, mu0, max_iter=100):
 
     return mu, z, history
 
+# Step 11 - kmeanspp_init
+def kmeanspp_init(X, K, rng):
+    """
+    Initialize K cluster centres using the K-Means++ algorithm.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Input dataset containing N observations and D features.
+
+    K : int
+        Number of cluster centres to initialize.
+
+    rng : numpy.random.Generator
+        Random number generator used for reproducible initialization.
+
+    Returns
+    -------
+    mu : numpy.ndarray of shape (K, D)
+        Initial cluster centres selected from rows of X.
+        The returned array has floating-point dtype.
+    """
+
+    # Convert the input dataset into a floating-point NumPy array.
+    X = np.asarray(X, dtype=float)
+
+    # Validate that X is a two-dimensional data matrix.
+    if X.ndim != 2:
+        raise ValueError("X must be a two-dimensional array.")
+
+    N, D = X.shape
+
+    # Ensure that the dataset contains at least one observation.
+    if N == 0:
+        raise ValueError("X must contain at least one observation.")
+
+    # Validate the requested number of cluster centres.
+    if (
+        isinstance(K, (bool, np.bool_))
+        or not isinstance(K, (int, np.integer))
+        or K < 1
+    ):
+        raise ValueError("K must be a positive integer.")
+
+    # Allocate an array to store the K initial centres.
+    mu = np.empty((K, D), dtype=float)
+
+    # ---------------------------------------------------------
+    # 1. Select the first centre uniformly at random
+    # ---------------------------------------------------------
+
+    # Choose an observation index using the supplied generator.
+    first_idx = rng.integers(N)
+
+    # Use the selected observation as the first centre.
+    mu[0] = X[first_idx]
+
+    # ---------------------------------------------------------
+    # 2. Calculate squared distances to the nearest centre
+    # ---------------------------------------------------------
+
+    # Calculate the squared Euclidean distance from every
+    # observation to the first selected centre.
+    D2 = np.sum(
+        (X - mu[0]) ** 2,
+        axis=1
+    )
+
+    # ---------------------------------------------------------
+    # 3. Select the remaining K - 1 centres
+    # ---------------------------------------------------------
+
+    for k in range(1, K):
+
+        # Calculate the total squared distance.
+        total_distance = np.sum(D2)
+
+        if total_distance == 0.0:
+
+            # If every observation already has zero distance
+            # to its nearest selected centre, choose uniformly
+            # at random as specified in the instructions.
+            next_idx = rng.integers(N)
+
+        else:
+
+            # Calculate the probability of selecting each observation.
+            # Observations farther from existing centres receive
+            # higher selection probabilities.
+            probabilities = D2 / total_distance
+
+            # Select the next centre using the D-squared distribution.
+            next_idx = rng.choice(
+                N,
+                p=probabilities
+            )
+
+        # Add the selected observation as the next centre.
+        mu[k] = X[next_idx]
+
+        # -----------------------------------------------------
+        # 4. Update nearest-centre squared distances
+        # -----------------------------------------------------
+
+        # Calculate squared distances to the newly selected centre.
+        new_D2 = np.sum(
+            (X - mu[k]) ** 2,
+            axis=1
+        )
+
+        # Retain the minimum squared distance to any selected centre.
+        D2 = np.minimum(D2, new_D2)
+
+    return mu
+
