@@ -3815,3 +3815,162 @@ def graph_laplacians(W):
         "L_rw": L_rw
     }
 
+# Step 27 - spectral_clustering
+def spectral_clustering(W, K, rng, variant="sym", n_init=10):
+    """
+    Perform spectral clustering using the bottom eigenvectors
+    of a graph Laplacian.
+
+    Parameters
+    ----------
+    W : array-like of shape (N, N)
+        Symmetric weighted adjacency matrix.
+
+    K : int
+        Number of clusters.
+
+    rng : numpy.random.Generator
+        Random number generator used by K-means initialization.
+
+    variant : str, default="sym"
+        Spectral clustering formulation:
+            - "sym": Symmetric normalized Laplacian.
+            - "rw": Random-walk normalized formulation.
+            - "unnormalized": Unnormalized graph Laplacian.
+
+    n_init : int, default=10
+        Number of K-means initialization attempts.
+
+    Returns
+    -------
+    dict
+        z       : Integer cluster assignments of shape (N,).
+        T       : Spectral embedding of shape (N, K).
+        eigvals : All eigenvalues of the decomposed Laplacian,
+                  sorted in ascending order.
+    """
+
+    # Validate the requested spectral clustering variant.
+    valid_variants = ("sym", "rw", "unnormalized")
+
+    if variant not in valid_variants:
+        raise ValueError(
+            "variant must be 'sym', 'rw', or 'unnormalized'."
+        )
+
+    # Validate the number of clusters.
+    if (
+        isinstance(K, (bool, np.bool_))
+        or not isinstance(K, (int, np.integer))
+        or K < 1
+    ):
+        raise ValueError("K must be a positive integer.")
+
+    # Convert the adjacency matrix into a floating-point array.
+    W = np.asarray(W, dtype=float)
+
+    # ---------------------------------------------------------
+    # 1. Calculate the graph Laplacians
+    # ---------------------------------------------------------
+
+    # Reuse the graph_laplacians implementation from Step 26.
+    lap = graph_laplacians(W)
+
+    # Retrieve the number of graph nodes.
+    N = W.shape[0]
+
+    if K > N:
+        raise ValueError("K cannot exceed the number of graph nodes.")
+
+    # ---------------------------------------------------------
+    # 2. Select the Laplacian for eigendecomposition
+    # ---------------------------------------------------------
+
+    if variant == "unnormalized":
+
+        # Unnormalized spectral clustering uses the eigenvectors
+        # corresponding to the smallest eigenvalues of L.
+        L = lap["L"]
+
+    else:
+
+        # Both normalized variants use the symmetric normalized
+        # graph Laplacian.
+        L_sym = lap["L_sym"]
+
+        # Explicitly enforce symmetry to eliminate small
+        # floating-point rounding differences.
+        L = 0.5 * (L_sym + L_sym.T)
+
+    # ---------------------------------------------------------
+    # 3. Compute eigenvalues and eigenvectors
+    # ---------------------------------------------------------
+
+    # eigh is designed for real symmetric matrices and returns
+    # eigenvalues in ascending order.
+    eigvals, eigvecs = np.linalg.eigh(L)
+
+    # Select the K eigenvectors corresponding to the smallest
+    # K eigenvalues.
+    T = eigvecs[:, :K].copy()
+
+    # ---------------------------------------------------------
+    # 4. Construct the spectral embedding
+    # ---------------------------------------------------------
+
+    if variant == "sym":
+
+        # Ng, Jordan and Weiss formulation:
+        # Normalize every row of the selected eigenvector matrix
+        # to have unit Euclidean norm.
+        row_norms = np.linalg.norm(
+            T,
+            axis=1,
+            keepdims=True
+        )
+
+        # Treat norms smaller than 1e-12 as 1e-12 to avoid
+        # division by zero and numerical instability.
+        row_norms = np.maximum(row_norms, 1e-12)
+
+        T = T / row_norms
+
+    elif variant == "rw":
+
+        # Shi and Malik formulation:
+        # Transform the eigenvectors of L_sym into the corresponding
+        # eigenvectors of the random-walk Laplacian.
+        #
+        # Divide each row by the square root of its node degree.
+        sqrt_degrees = np.sqrt(lap["d"])
+
+        T = T / sqrt_degrees[:, np.newaxis]
+
+    # For "unnormalized", the selected eigenvectors are used directly.
+
+    # ---------------------------------------------------------
+    # 5. Cluster the spectral embedding using K-means++
+    # ---------------------------------------------------------
+
+    # Run K-means with multiple initializations on the spectral
+    # embedding rather than on the original observations.
+    result = kmeans_restarts(
+        T,
+        K,
+        n_init,
+        rng
+    )
+
+    # Retrieve the cluster assignments from the best K-means run.
+    z = result["z"]
+
+    # ---------------------------------------------------------
+    # 6. Return the spectral clustering results
+    # ---------------------------------------------------------
+
+    return {
+        "z": z,
+        "T": T,
+        "eigvals": eigvals
+    }
+

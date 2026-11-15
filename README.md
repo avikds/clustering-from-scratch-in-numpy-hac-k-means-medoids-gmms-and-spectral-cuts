@@ -36,6 +36,7 @@ python scaffold.py
 - [x] **24.** k_selection_curves
 - [x] **25.** gaussian_affinity
 - [x] **26.** graph_laplacians
+- [x] **27.** spectral_clustering
 
 ---
 
