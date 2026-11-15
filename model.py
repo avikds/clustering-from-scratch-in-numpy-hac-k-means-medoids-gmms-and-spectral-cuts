@@ -456,3 +456,181 @@ def cluster_scores(labels_pred, labels_true):
         "nmi": float(nmi)
     }
 
+# Step 5 - agglomerate
+def agglomerate(D, linkage="average"):
+    """
+    Perform hierarchical agglomerative clustering using a dissimilarity matrix.
+
+    Parameters
+    ----------
+    D : array-like of shape (N, N)
+        Symmetric pairwise dissimilarity matrix.
+
+    linkage : str, default="average"
+        Linkage criterion:
+            - "single": Minimum pairwise distance.
+            - "complete": Maximum pairwise distance.
+            - "average": Size-weighted average pairwise distance.
+
+    Returns
+    -------
+    Z : numpy.ndarray of shape (N - 1, 4)
+        Linkage matrix where each row contains:
+            [cluster_a, cluster_b, merge_height, cluster_size]
+
+        Original observations have IDs 0 to N-1.
+        The cluster created at step t has ID N+t.
+
+    Notes
+    -----
+    The input dissimilarity matrix is not modified.
+    Ties are resolved by choosing the lexicographically smallest
+    pair of active cluster IDs.
+    """
+
+    # Validate the linkage criterion.
+    valid_linkages = ("single", "complete", "average")
+
+    if linkage not in valid_linkages:
+        raise ValueError(f"Unsupported linkage: {linkage}")
+
+    # Convert the input into a floating-point NumPy array.
+    D = np.asarray(D, dtype=float)
+
+    # Ensure that the dissimilarity matrix is square.
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("D must be a square two-dimensional matrix.")
+
+    # Determine the number of original observations.
+    n = D.shape[0]
+
+    if n == 0:
+        raise ValueError("D must contain at least one observation.")
+
+    # Allocate the linkage matrix.
+    # Each merge records [a, b, height, cluster_size].
+    Z = np.empty((n - 1, 4), dtype=float)
+
+    # No merges are required for a single observation.
+    if n == 1:
+        return Z
+
+    # ---------------------------------------------------------
+    # 1. Initialize the working dissimilarity matrix
+    # ---------------------------------------------------------
+
+    # Reserve space for all original and newly created clusters.
+    # The maximum cluster ID is 2*N - 2.
+    work = np.full(
+        (2 * n - 1, 2 * n - 1),
+        np.inf,
+        dtype=float
+    )
+
+    # Copy the original dissimilarities.
+    # The input matrix D remains unchanged.
+    work[:n, :n] = D
+
+    # Track the number of original observations in each cluster.
+    sizes = np.zeros(2 * n - 1, dtype=np.int64)
+    sizes[:n] = 1
+
+    # Track which clusters are currently active.
+    active = np.zeros(2 * n - 1, dtype=bool)
+    active[:n] = True
+
+    # ---------------------------------------------------------
+    # 2. Perform N - 1 agglomerative merges
+    # ---------------------------------------------------------
+
+    for t in range(n - 1):
+
+        # Obtain the IDs of all currently active clusters.
+        # np.flatnonzero returns them in ascending order.
+        active_ids = np.flatnonzero(active)
+
+        # Generate upper-triangular indices to consider each
+        # unordered cluster pair exactly once.
+        upper_i, upper_j = np.triu_indices(
+            len(active_ids),
+            k=1
+        )
+
+        # Retrieve the current dissimilarities between active pairs.
+        pair_distances = work[
+            active_ids[upper_i],
+            active_ids[upper_j]
+        ]
+
+        # Locate the smallest dissimilarity.
+        # np.argmin selects the first occurrence, ensuring that
+        # ties are resolved lexicographically by cluster IDs.
+        best_idx = int(np.argmin(pair_distances))
+
+        # Identify the two clusters to merge.
+        a = int(active_ids[upper_i[best_idx]])
+        b = int(active_ids[upper_j[best_idx]])
+
+        # Record the dissimilarity at which the clusters merge.
+        height = float(pair_distances[best_idx])
+
+        # Assign the new cluster ID.
+        new_id = n + t
+
+        # Calculate the size of the resulting cluster.
+        new_size = sizes[a] + sizes[b]
+
+        # Store the merge information in the linkage matrix.
+        Z[t] = [a, b, height, new_size]
+
+        # -----------------------------------------------------
+        # 3. Update distances using the selected linkage method
+        # -----------------------------------------------------
+
+        # Remove the two merged clusters from the active set.
+        active[a] = False
+        active[b] = False
+
+        # Identify all remaining active clusters.
+        other_ids = np.flatnonzero(active)
+
+        # Retrieve distances from the two merged clusters
+        # to every remaining active cluster.
+        dist_a = work[a, other_ids]
+        dist_b = work[b, other_ids]
+
+        if linkage == "single":
+
+            # Single linkage:
+            # Distance to the new cluster is the minimum distance
+            # to either of the two merged clusters.
+            new_distances = np.minimum(dist_a, dist_b)
+
+        elif linkage == "complete":
+
+            # Complete linkage:
+            # Distance to the new cluster is the maximum distance
+            # to either of the two merged clusters.
+            new_distances = np.maximum(dist_a, dist_b)
+
+        else:
+
+            # Average linkage:
+            # Calculate the size-weighted average of the distances.
+            new_distances = (
+                sizes[a] * dist_a +
+                sizes[b] * dist_b
+            ) / new_size
+
+        # Store the updated distances symmetrically.
+        work[new_id, other_ids] = new_distances
+        work[other_ids, new_id] = new_distances
+
+        # Update the size of the newly created cluster.
+        sizes[new_id] = new_size
+
+        # Activate the newly created cluster.
+        active[new_id] = True
+
+    return Z
+
