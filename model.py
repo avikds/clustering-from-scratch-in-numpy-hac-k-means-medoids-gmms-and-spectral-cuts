@@ -634,3 +634,144 @@ def agglomerate(D, linkage="average"):
 
     return Z
 
+# Step 6 - cut_tree
+def cut_tree(Z, n_clusters=None, height=None):
+    """
+    Convert a hierarchical clustering linkage matrix into flat cluster labels.
+
+    Parameters
+    ----------
+    Z : array-like of shape (N - 1, 4)
+        Linkage matrix produced by agglomerate().
+        Each row contains [a, b, height, size].
+
+    n_clusters : int, optional
+        Desired number of clusters. Applies the first N - n_clusters merges.
+
+    height : float, optional
+        Distance threshold. Applies merges whose heights are
+        less than or equal to this threshold.
+
+    Returns
+    -------
+    labels : numpy.ndarray of shape (N,)
+        Integer cluster labels assigned in order of first appearance.
+
+    Raises
+    ------
+    ValueError
+        If both or neither of n_clusters and height are provided,
+        or if n_clusters is outside the valid range.
+    """
+
+    # Exactly one cutting criterion must be provided.
+    if (n_clusters is None) == (height is None):
+        raise ValueError(
+            "Provide exactly one of n_clusters or height."
+        )
+
+    # Convert the linkage matrix to a NumPy array.
+    Z = np.asarray(Z, dtype=float)
+
+    # Validate the linkage matrix dimensions.
+    if Z.ndim != 2 or Z.shape[1] != 4:
+        raise ValueError("Z must have shape (N - 1, 4).")
+
+    # Infer the number of original observations.
+    n = Z.shape[0] + 1
+
+    # ---------------------------------------------------------
+    # 1. Determine how many merges to apply
+    # ---------------------------------------------------------
+
+    if n_clusters is not None:
+
+        # Validate that the requested cluster count is an integer.
+        if (
+            isinstance(n_clusters, (bool, np.bool_))
+            or not isinstance(n_clusters, (int, np.integer))
+        ):
+            raise ValueError("n_clusters must be an integer.")
+
+        # A valid clustering must contain between 1 and N clusters.
+        if not 1 <= n_clusters <= n:
+            raise ValueError(
+                "n_clusters must be between 1 and N."
+            )
+
+        # Apply exactly N - n_clusters merges.
+        n_merges = n - n_clusters
+
+    else:
+
+        # Ensure that the height threshold is a scalar.
+        if not np.isscalar(height):
+            raise ValueError("height must be a scalar.")
+
+        try:
+            height = float(height)
+        except (TypeError, ValueError):
+            raise ValueError("height must be numeric.")
+
+        # Count the consecutive merges whose heights are within
+        # the specified threshold.
+        merge_heights = Z[:, 2]
+
+        eligible = merge_heights <= height
+
+        # HAC linkage heights are non-decreasing, so eligible
+        # merges form a prefix of the linkage matrix.
+        n_merges = int(np.sum(eligible))
+
+    # ---------------------------------------------------------
+    # 2. Build the cluster parent structure
+    # ---------------------------------------------------------
+
+    # Original observations have IDs 0, 1, ..., N-1.
+    # New clusters have IDs N, N+1, ..., 2*N-2.
+    #
+    # parent[c] stores the ID of the cluster that contains c.
+    # A value of -1 indicates that the cluster has no parent.
+    parent = np.full(2 * n - 1, -1, dtype=int)
+
+    # Apply the selected merges in chronological order.
+    for t in range(n_merges):
+
+        # Retrieve the two clusters being merged.
+        a = int(Z[t, 0])
+        b = int(Z[t, 1])
+
+        # The new cluster receives ID N + t.
+        new_id = n + t
+
+        # Record the parent of both merged clusters.
+        parent[a] = new_id
+        parent[b] = new_id
+
+    # ---------------------------------------------------------
+    # 3. Find the final cluster of each original observation
+    # ---------------------------------------------------------
+
+    labels = np.empty(n, dtype=int)
+
+    # Map final cluster IDs to consecutive labels.
+    cluster_to_label = {}
+
+    for i in range(n):
+
+        # Start from the original observation.
+        root = i
+
+        # Follow parent pointers until reaching the final
+        # cluster containing this observation.
+        while parent[root] != -1:
+            root = parent[root]
+
+        # Assign labels in order of first appearance.
+        if root not in cluster_to_label:
+            cluster_to_label[root] = len(cluster_to_label)
+
+        labels[i] = cluster_to_label[root]
+
+    return labels
+
