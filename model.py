@@ -2659,3 +2659,240 @@ def gmm_m_step(X, r, cov_type="full", reg=1e-6):
 
     return pi, mu, Sigma
 
+# Step 20 - fit_gmm
+def fit_gmm(X, K, cov_type="full", rng=None, n_init=1,
+            max_iter=200, tol=1e-4, reg=1e-6):
+    """
+    Fit a Gaussian Mixture Model using Expectation-Maximization
+    with multiple K-means++ initializations.
+
+    Parameters
+    ----------
+    X : array-like of shape (N, D)
+        Input dataset containing N observations and D features.
+
+    K : int
+        Number of Gaussian mixture components.
+
+    cov_type : str, default="full"
+        Covariance structure:
+            - "full"
+            - "tied"
+            - "diag"
+            - "spherical"
+
+    rng : numpy.random.Generator, optional
+        Random number generator used for reproducible initialization.
+
+    n_init : int, default=1
+        Number of independent EM restarts.
+
+    max_iter : int, default=200
+        Maximum number of EM iterations per restart.
+
+    tol : float, default=1e-4
+        Convergence tolerance, scaled by the number of observations.
+
+    reg : float, default=1e-6
+        Covariance regularization added to the diagonal.
+
+    Returns
+    -------
+    dict
+        pi      : Mixture weights of shape (K,).
+        mu      : Component means of shape (K, D).
+        Sigma   : Covariance matrices of shape (K, D, D).
+        r       : Final responsibilities of shape (N, K).
+        z       : Final hard assignments of shape (N,).
+        ll      : Final log-likelihood as a Python float.
+        history : List of log-likelihood values for the best restart.
+    """
+
+    # Convert the input dataset into a floating-point NumPy array.
+    X = np.asarray(X, dtype=float)
+
+    # ---------------------------------------------------------
+    # 1. Validate inputs
+    # ---------------------------------------------------------
+
+    if X.ndim != 2:
+        raise ValueError("X must be a two-dimensional array.")
+
+    N, D = X.shape
+
+    if N == 0 or D == 0:
+        raise ValueError("X must contain observations and features.")
+
+    if (
+        isinstance(K, (bool, np.bool_))
+        or not isinstance(K, (int, np.integer))
+        or K < 1
+    ):
+        raise ValueError("K must be a positive integer.")
+
+    if K > N:
+        raise ValueError("K cannot exceed the number of observations.")
+
+    if (
+        isinstance(n_init, (bool, np.bool_))
+        or not isinstance(n_init, (int, np.integer))
+        or n_init < 1
+    ):
+        raise ValueError("n_init must be a positive integer.")
+
+    if (
+        isinstance(max_iter, (bool, np.bool_))
+        or not isinstance(max_iter, (int, np.integer))
+        or max_iter < 0
+    ):
+        raise ValueError("max_iter must be a non-negative integer.")
+
+    if not np.isfinite(tol) or tol < 0:
+        raise ValueError("tol must be a non-negative finite number.")
+
+    # Validate the covariance structure.
+    valid_cov_types = ("full", "tied", "diag", "spherical")
+
+    if cov_type not in valid_cov_types:
+        raise ValueError(
+            "cov_type must be 'full', 'tied', 'diag', or 'spherical'."
+        )
+
+    # Create a random generator if one was not supplied.
+    if rng is None:
+        rng = np.random.default_rng()
+
+    # ---------------------------------------------------------
+    # 2. Initialize storage for the best restart
+    # ---------------------------------------------------------
+
+    best_result = None
+    best_ll = -np.inf
+
+    # ---------------------------------------------------------
+    # 3. Perform multiple independent EM restarts
+    # ---------------------------------------------------------
+
+    for restart in range(n_init):
+
+        # -----------------------------------------------------
+        # 3.1 Initialize using K-means++
+        # -----------------------------------------------------
+
+        # Select initial centroids using D-squared seeding.
+        mu0 = kmeanspp_init(X, K, rng)
+
+        # Run Lloyd's K-means algorithm for 20 iterations
+        # to obtain initial cluster assignments.
+        _, z0, _ = kmeans_lloyd(
+            X,
+            mu0,
+            max_iter=20
+        )
+
+        # Convert the K-means assignments into one-hot responsibilities.
+        # Each observation initially belongs entirely to one component.
+        r0 = np.zeros((N, K), dtype=float)
+
+        r0[np.arange(N), z0] = 1.0
+
+        # Initialize mixture weights, means and covariance matrices
+        # using the M-step.
+        pi, mu, Sigma = gmm_m_step(
+            X,
+            r0,
+            cov_type=cov_type,
+            reg=reg
+        )
+
+        # Store the log-likelihood after each E-step.
+        history = []
+
+        # Track whether convergence has occurred.
+        converged = False
+
+        # -----------------------------------------------------
+        # 3.2 Alternate E-step and M-step
+        # -----------------------------------------------------
+
+        for iteration in range(max_iter):
+
+            # E-step: calculate responsibilities and log-likelihood
+            # using the current GMM parameters.
+            r, ll = gmm_e_step(
+                X,
+                pi,
+                mu,
+                Sigma
+            )
+
+            # Record the current log-likelihood.
+            history.append(float(ll))
+
+            # Check convergence after at least two E-step evaluations.
+            if (
+                len(history) >= 2
+                and history[-1] - history[-2] < tol * N
+            ):
+
+                converged = True
+                break
+
+            # M-step: update mixture weights, means and covariances
+            # using the latest responsibilities.
+            pi, mu, Sigma = gmm_m_step(
+                X,
+                r,
+                cov_type=cov_type,
+                reg=reg
+            )
+
+        # -----------------------------------------------------
+        # 3.3 Final E-step if maximum iterations are exhausted
+        # -----------------------------------------------------
+
+        # If convergence was not reached, the last M-step has updated
+        # the parameters. Perform one final E-step so that the returned
+        # responsibilities and log-likelihood match those parameters.
+        if not converged:
+
+            r, ll = gmm_e_step(
+                X,
+                pi,
+                mu,
+                Sigma
+            )
+
+            history.append(float(ll))
+
+        # -----------------------------------------------------
+        # 3.4 Calculate final hard cluster assignments
+        # -----------------------------------------------------
+
+        # Assign each observation to the component with the
+        # highest posterior responsibility.
+        # np.argmax resolves ties in favour of the lowest index.
+        z = np.argmax(r, axis=1).astype(int)
+
+        # -----------------------------------------------------
+        # 3.5 Retain the restart with the highest log-likelihood
+        # -----------------------------------------------------
+
+        # Strict comparison preserves the earlier restart
+        # when two restarts have identical log-likelihoods.
+        if ll > best_ll:
+
+            best_ll = float(ll)
+
+            best_result = {
+                "pi": pi.copy(),
+                "mu": mu.copy(),
+                "Sigma": Sigma.copy(),
+                "r": r.copy(),
+                "z": z.copy(),
+                "ll": float(ll),
+                "history": history.copy()
+            }
+
+    return best_result
+
