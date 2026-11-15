@@ -1076,3 +1076,161 @@ def same_hierarchy(Z1, Z2):
     # Two hierarchical trees are equivalent if their cluster families match.
     return clusters1 == clusters2
 
+# Step 9 - linkage_report
+def max_diameter(D, labels):
+    """
+    Calculate the maximum pairwise dissimilarity between
+    any two observations belonging to the same cluster.
+
+    Parameters
+    ----------
+    D : array-like of shape (N, N)
+        Pairwise dissimilarity matrix.
+
+    labels : array-like of shape (N,)
+        Cluster assignments for the observations.
+
+    Returns
+    -------
+    float
+        Largest within-cluster dissimilarity.
+        Returns 0.0 if every cluster is a singleton.
+    """
+
+    # Convert inputs into NumPy arrays.
+    D = np.asarray(D, dtype=float)
+    labels = np.asarray(labels)
+
+    # Validate the dissimilarity matrix.
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("D must be a square two-dimensional matrix.")
+
+    # Validate the cluster labels.
+    if labels.ndim != 1:
+        raise ValueError("labels must be a one-dimensional array.")
+
+    if len(labels) != D.shape[0]:
+        raise ValueError("D and labels must contain the same number of observations.")
+
+    # Obtain unique cluster labels and the cluster index of each observation.
+    unique_labels, inverse = np.unique(
+        labels,
+        return_inverse=True
+    )
+
+    # Initialize the maximum within-cluster diameter.
+    largest_diameter = 0.0
+
+    # Examine each cluster.
+    for cluster_idx in range(len(unique_labels)):
+
+        # Find the observations belonging to the current cluster.
+        members = np.flatnonzero(inverse == cluster_idx)
+
+        # A singleton cluster has no distinct observation pairs.
+        if len(members) < 2:
+            continue
+
+        # Extract the pairwise dissimilarities within this cluster.
+        cluster_distances = D[np.ix_(members, members)]
+
+        # Consider only the upper triangle, excluding the diagonal.
+        pair_distances = cluster_distances[
+            np.triu_indices(len(members), k=1)
+        ]
+
+        # Update the largest within-cluster dissimilarity.
+        cluster_diameter = float(np.max(pair_distances))
+
+        largest_diameter = max(
+            largest_diameter,
+            cluster_diameter
+        )
+
+    return float(largest_diameter)
+
+
+def linkage_report(D, K):
+    """
+    Compare single, complete, and average hierarchical clustering.
+
+    Parameters
+    ----------
+    D : array-like of shape (N, N)
+        Pairwise dissimilarity matrix.
+
+    K : int
+        Desired number of clusters.
+
+    Returns
+    -------
+    dict
+        Dictionary containing one report for each linkage method.
+
+        Each report contains:
+            top_height   : Height of the final merge.
+            largest      : Size of the largest cluster.
+            singletons   : Number of singleton clusters.
+            max_diameter : Maximum within-cluster dissimilarity.
+    """
+
+    # Convert the input into a floating-point NumPy array.
+    D = np.asarray(D, dtype=float)
+
+    # Validate the dissimilarity matrix.
+    if D.ndim != 2 or D.shape[0] != D.shape[1]:
+        raise ValueError("D must be a square two-dimensional matrix.")
+
+    # Define the three linkage methods to compare.
+    linkages = ("single", "complete", "average")
+
+    # Store the evaluation results for all three methods.
+    report = {}
+
+    # ---------------------------------------------------------
+    # Compare each hierarchical clustering linkage method
+    # ---------------------------------------------------------
+
+    for linkage in linkages:
+
+        # Build the hierarchical clustering tree.
+        Z = agglomerate(D, linkage=linkage)
+
+        # Cut the dendrogram into exactly K clusters.
+        labels = cut_tree(
+            Z,
+            n_clusters=K
+        )
+
+        # Determine the size of each resulting cluster.
+        _, cluster_sizes = np.unique(
+            labels,
+            return_counts=True
+        )
+
+        # Find the size of the largest cluster.
+        largest = int(np.max(cluster_sizes))
+
+        # Count the number of singleton clusters.
+        singletons = int(np.sum(cluster_sizes == 1))
+
+        # Obtain the height of the final merge.
+        # A single-observation dataset has no merges.
+        if len(Z) > 0:
+            top_height = float(Z[-1, 2])
+        else:
+            top_height = 0.0
+
+        # Calculate the largest within-cluster dissimilarity.
+        diameter = max_diameter(D, labels)
+
+        # Store the statistics for the current linkage method.
+        report[linkage] = {
+            "top_height": top_height,
+            "largest": largest,
+            "singletons": singletons,
+            "max_diameter": float(diameter)
+        }
+
+    return report
+
