@@ -35,6 +35,7 @@ python scaffold.py
 - [x] **23.** silhouette_samples
 - [x] **24.** k_selection_curves
 - [x] **25.** gaussian_affinity
+- [x] **26.** graph_laplacians
 
 ---
 

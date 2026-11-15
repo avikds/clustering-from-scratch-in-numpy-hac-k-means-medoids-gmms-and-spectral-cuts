@@ -3725,3 +3725,93 @@ def gaussian_affinity(X, sigma, n_neighbors=None):
 
     return W
 
+# Step 26 - graph_laplacians
+def graph_laplacians(W):
+    """
+    Compute the degree vector and three graph Laplacians.
+
+    Parameters
+    ----------
+    W : array-like of shape (N, N)
+        Symmetric weighted adjacency (similarity) matrix.
+        Every node must have a strictly positive degree.
+
+    Returns
+    -------
+    dict
+        d     : Degree vector of shape (N,).
+        L     : Unnormalized graph Laplacian.
+        L_sym : Symmetric normalized graph Laplacian.
+        L_rw  : Random-walk normalized graph Laplacian.
+    """
+
+    # Convert the weight matrix into a floating-point NumPy array.
+    W = np.asarray(W, dtype=float)
+
+    # Validate that W is a square matrix.
+    if W.ndim != 2 or W.shape[0] != W.shape[1]:
+        raise ValueError("W must be a square two-dimensional matrix.")
+
+    # Ensure that the weight matrix contains finite values.
+    if not np.all(np.isfinite(W)):
+        raise ValueError("W must contain only finite values.")
+
+    # The adjacency matrix must be symmetric.
+    if not np.allclose(W, W.T):
+        raise ValueError("W must be symmetric.")
+
+    # ---------------------------------------------------------
+    # 1. Calculate the degree vector
+    # ---------------------------------------------------------
+
+    # The degree of each node is the sum of its connection weights.
+    d = np.sum(W, axis=1)
+
+    # Positive degrees are required for normalized Laplacians.
+    if np.any(d <= 0):
+        raise ValueError("Every node must have a positive degree.")
+
+    # ---------------------------------------------------------
+    # 2. Calculate the unnormalized graph Laplacian
+    # ---------------------------------------------------------
+
+    # L = D - W, where D is the diagonal degree matrix.
+    # Constructing D using broadcasting avoids unnecessary operations.
+    L = np.diag(d) - W
+
+    # ---------------------------------------------------------
+    # 3. Calculate the symmetric normalized Laplacian
+    # ---------------------------------------------------------
+
+    # L_sym = D^(-1/2) @ L @ D^(-1/2)
+    #
+    # Calculate inverse square roots of node degrees.
+    inv_sqrt_d = 1.0 / np.sqrt(d)
+
+    # Apply degree normalization through broadcasting.
+    L_sym = (
+        inv_sqrt_d[:, np.newaxis]
+        * L
+        * inv_sqrt_d[np.newaxis, :]
+    )
+
+    # ---------------------------------------------------------
+    # 4. Calculate the random-walk normalized Laplacian
+    # ---------------------------------------------------------
+
+    # L_rw = D^(-1) @ L
+    #
+    # Divide each row by its corresponding node degree.
+    L_rw = L / d[:, np.newaxis]
+
+    # ---------------------------------------------------------
+    # 5. Return all graph Laplacians
+    # ---------------------------------------------------------
+
+    return {
+        "d": d,
+        "L": L,
+        "L_sym": L_sym,
+        "L_rw": L_rw
+    }
+
