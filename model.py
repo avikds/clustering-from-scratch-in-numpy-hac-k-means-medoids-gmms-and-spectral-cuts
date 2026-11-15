@@ -297,3 +297,162 @@ def pair_counts(N):
     # Return all counts as standard Python integers.
     return (int(TP), int(FP), int(FN), int(TN))
 
+# Step 4 - cluster_scores
+def cluster_scores(labels_pred, labels_true):
+    """
+    Compute external clustering evaluation scores.
+
+    Parameters
+    ----------
+    labels_pred : array-like of shape (N,)
+        Predicted cluster labels.
+
+    labels_true : array-like of shape (N,)
+        Ground-truth reference labels.
+
+    Returns
+    -------
+    dict
+        Dictionary containing the following scores:
+            purity : Cluster purity.
+            rand   : Rand Index.
+            ari    : Adjusted Rand Index.
+            mi     : Mutual Information (in nats).
+            nmi    : Normalized Mutual Information.
+    """
+
+    # Construct the contingency table using the previously implemented function.
+    N = contingency_table(labels_pred, labels_true)
+
+    # Calculate the total number of observations.
+    n_samples = int(np.sum(N))
+
+    # Purity and information-theoretic scores are undefined for empty data.
+    if n_samples == 0:
+        raise ValueError("Clustering labels must contain at least one observation.")
+
+    # ---------------------------------------------------------
+    # 1. Purity
+    # ---------------------------------------------------------
+
+    # For each predicted cluster, find the number of observations
+    # belonging to its most frequent true class.
+    purity = float(np.sum(np.max(N, axis=1)) / n_samples)
+
+    # ---------------------------------------------------------
+    # 2. Rand Index and Adjusted Rand Index
+    # ---------------------------------------------------------
+
+    # Obtain True Positive, False Positive, False Negative,
+    # and True Negative pair counts.
+    TP, FP, FN, TN = pair_counts(N)
+
+    # Calculate the total number of unordered observation pairs.
+    total_pairs = TP + FP + FN + TN
+
+    # Rand Index: proportion of pairs on which both partitions agree.
+    # When there are no pairs, use the conventional perfect-agreement
+    # value of 1.0.
+    if total_pairs == 0:
+        rand = 1.0
+    else:
+        rand = float((TP + TN) / total_pairs)
+
+    # Expected number of agreements under the generalized
+    # random-partition model.
+    if total_pairs == 0:
+        expected_index = 0.0
+    else:
+        expected_index = (
+            (TP + FP) * (TP + FN)
+        ) / total_pairs
+
+    # Maximum index used in the Adjusted Rand Index denominator.
+    max_index = 0.5 * (
+        (TP + FP) + (TP + FN)
+    )
+
+    # Adjusted Rand Index corrects the Rand Index for chance agreement.
+    ari_denominator = max_index - expected_index
+
+    # Handle the zero-denominator edge case.
+    if ari_denominator == 0.0:
+        ari = 1.0
+    else:
+        ari = float(
+            (TP - expected_index) / ari_denominator
+        )
+
+    # ---------------------------------------------------------
+    # 3. Mutual Information (MI)
+    # ---------------------------------------------------------
+
+    # Calculate the row and column marginal counts.
+    row_sums = np.sum(N, axis=1).astype(float)
+    col_sums = np.sum(N, axis=0).astype(float)
+
+    # Convert the contingency table into joint probabilities.
+    joint_prob = N.astype(float) / n_samples
+
+    # Calculate marginal probabilities.
+    row_prob = row_sums / n_samples
+    col_prob = col_sums / n_samples
+
+    # Only nonzero joint probabilities contribute to MI.
+    nonzero = joint_prob > 0
+
+    # Mutual Information:
+    # MI(U, V) = sum_ij p(i,j) * log(p(i,j) / (p(i)*p(j)))
+    mi = float(
+        np.sum(
+            joint_prob[nonzero]
+            * np.log(
+                joint_prob[nonzero]
+                / (
+                    row_prob[:, np.newaxis]
+                    * col_prob[np.newaxis, :]
+                )[nonzero]
+            )
+        )
+    )
+
+    # Remove any small negative value caused by floating-point rounding.
+    mi = max(mi, 0.0)
+
+    # ---------------------------------------------------------
+    # 4. Normalized Mutual Information (NMI)
+    # ---------------------------------------------------------
+
+    # Calculate the entropy of the predicted clustering U.
+    H_pred = -np.sum(
+        row_prob[row_prob > 0]
+        * np.log(row_prob[row_prob > 0])
+    )
+
+    # Calculate the entropy of the reference labels V.
+    H_true = -np.sum(
+        col_prob[col_prob > 0]
+        * np.log(col_prob[col_prob > 0])
+    )
+
+    # Use the arithmetic mean of the two entropies for normalization.
+    nmi_denominator = 0.5 * (H_pred + H_true)
+
+    # Handle the case where both partitions contain no uncertainty.
+    if nmi_denominator == 0.0:
+        nmi = 1.0
+    else:
+        nmi = float(mi / nmi_denominator)
+
+    # ---------------------------------------------------------
+    # 5. Return all evaluation scores
+    # ---------------------------------------------------------
+
+    return {
+        "purity": float(purity),
+        "rand": float(rand),
+        "ari": float(ari),
+        "mi": float(mi),
+        "nmi": float(nmi)
+    }
+
