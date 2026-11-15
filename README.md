@@ -22,6 +22,7 @@ python scaffold.py
 - [x] **10.** kmeans_lloyd
 - [x] **11.** kmeanspp_init
 - [x] **12.** kmeans_restarts
+- [x] **13.** vq_bits
 
 ---
 

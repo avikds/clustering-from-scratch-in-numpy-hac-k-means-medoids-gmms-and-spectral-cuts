@@ -1643,3 +1643,71 @@ def kmeans_restarts(X, K, n_init, rng, init="kmeans++", max_iter=100):
         "all_J": all_J
     }
 
+# Step 13 - vq_bits
+def vq_bits(N, D, K, B=8):
+    """
+    Calculate the number of bits required for vector quantization.
+
+    Parameters
+    ----------
+    N : int
+        Number of input vectors.
+
+    D : int
+        Number of scalars per vector.
+
+    K : int
+        Number of prototypes in the codebook.
+
+    B : int, default=8
+        Number of bits used to represent each scalar.
+
+    Returns
+    -------
+    dict
+        raw_bits      : Uncompressed storage size.
+        code_bits     : Storage required for vector indices.
+        codebook_bits : Storage required for the codebook.
+        total_bits    : Total compressed storage size.
+        ratio         : Compression ratio (raw_bits / total_bits).
+    """
+
+    # Validate the input parameters.
+    values = (N, D, K, B)
+
+    if any(
+        isinstance(v, bool) or not isinstance(v, int)
+        for v in values
+    ):
+        raise ValueError("N, D, K and B must be integers.")
+
+    if N < 0 or D < 1 or K < 1 or B < 1:
+        raise ValueError("Invalid vector quantization parameters.")
+
+    # Calculate the uncompressed storage size.
+    raw_bits = N * D * B
+
+    # Calculate the number of bits required for each code index.
+    # bit_length() computes ceil(log2(K)) exactly for K >= 1.
+    bits_per_index = (K - 1).bit_length()
+
+    # Calculate the total storage required for all code indices.
+    code_bits = N * bits_per_index
+
+    # Calculate the storage required for all codebook prototypes.
+    codebook_bits = K * D * B
+
+    # Calculate the total compressed storage size.
+    total_bits = code_bits + codebook_bits
+
+    # Calculate the compression ratio.
+    ratio = float(raw_bits / total_bits)
+
+    return {
+        "raw_bits": int(raw_bits),
+        "code_bits": int(code_bits),
+        "codebook_bits": int(codebook_bits),
+        "total_bits": int(total_bits),
+        "ratio": ratio
+    }
+
