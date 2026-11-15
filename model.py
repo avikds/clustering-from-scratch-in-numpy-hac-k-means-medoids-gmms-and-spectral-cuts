@@ -1711,3 +1711,221 @@ def vq_bits(N, D, K, B=8):
         "ratio": ratio
     }
 
+# Step 14 - block_vq
+def block_vq(image, b, K, rng, n_init=1, max_iter=30):
+    """
+    Compress a grayscale image using block-based vector quantization.
+
+    Parameters
+    ----------
+    image : array-like of shape (H, W)
+        Grayscale image with pixel values between 0 and 255.
+
+    b : int
+        Side length of each non-overlapping square block.
+
+    K : int
+        Number of codebook prototypes.
+
+    rng : numpy.random.Generator
+        Random number generator for reproducible initialization.
+
+    n_init : int, default=1
+        Number of K-means initialization attempts.
+
+    max_iter : int, default=30
+        Maximum number of Lloyd iterations per initialization.
+
+    Returns
+    -------
+    dict
+        recon      : Reconstructed image.
+        codes      : Integer index assigned to each block.
+        codebook   : Rounded codebook of shape (K, b*b).
+        mse        : Mean squared reconstruction error.
+        psnr       : Peak signal-to-noise ratio in decibels.
+        bpp_codes  : Bits per pixel used by block indices.
+        bpp_total  : Bits per pixel including codebook storage.
+    """
+
+    # Convert the input image into a floating-point NumPy array.
+    image = np.asarray(image, dtype=float)
+
+    # Validate the image dimensions.
+    if image.ndim != 2:
+        raise ValueError("image must be a two-dimensional array.")
+
+    # Validate the block size.
+    if (
+        isinstance(b, (bool, np.bool_))
+        or not isinstance(b, (int, np.integer))
+        or b <= 0
+    ):
+        raise ValueError("b must be a positive integer.")
+
+    # Validate the number of codebook prototypes.
+    if (
+        isinstance(K, (bool, np.bool_))
+        or not isinstance(K, (int, np.integer))
+        or K < 1
+    ):
+        raise ValueError("K must be a positive integer.")
+
+    # ---------------------------------------------------------
+    # 1. Crop the image to the largest multiples of b
+    # ---------------------------------------------------------
+
+    H = (image.shape[0] // b) * b
+    W = (image.shape[1] // b) * b
+
+    # Keep only complete blocks.
+    cropped = image[:H, :W]
+
+    if H == 0 or W == 0:
+        raise ValueError("Image must contain at least one complete block.")
+
+    # ---------------------------------------------------------
+    # 2. Extract non-overlapping b x b blocks
+    # ---------------------------------------------------------
+
+    # Reshape into block rows, within-block rows,
+    # block columns, and within-block columns.
+    blocks = cropped.reshape(
+        H // b,
+        b,
+        W // b,
+        b
+    )
+
+    # Group each square block together.
+    # The order is left to right, then top to bottom.
+    blocks = blocks.transpose(0, 2, 1, 3)
+
+    # Flatten each block row by row into a vector of length b*b.
+    blocks = blocks.reshape(-1, b * b)
+
+    # Count the number of available blocks.
+    n_blocks = blocks.shape[0]
+
+    # The codebook cannot contain more prototypes than blocks.
+    if K > n_blocks:
+        raise ValueError("K cannot exceed the number of image blocks.")
+
+    # ---------------------------------------------------------
+    # 3. Learn the codebook using K-means++
+    # ---------------------------------------------------------
+
+    result = kmeans_restarts(
+        blocks,
+        K,
+        n_init,
+        rng,
+        max_iter=max_iter
+    )
+
+    # Retrieve the learned cluster centres.
+    mu = result["mu"]
+
+    # ---------------------------------------------------------
+    # 4. Round and clip the codebook
+    # ---------------------------------------------------------
+
+    # Round the centres to integer-valued pixel levels and
+    # clip them to the valid grayscale range.
+    #
+    # IMPORTANT: Keep the floating-point dtype.
+    # np.rint() produces rounded values without converting
+    # the array into an integer dtype.
+    codebook = np.clip(
+        np.rint(mu),
+        0.0,
+        255.0
+    )
+
+    # ---------------------------------------------------------
+    # 5. Re-encode blocks using the rounded codebook
+    # ---------------------------------------------------------
+
+    # Assign each original block to its nearest stored prototype.
+    codes, _ = assign_clusters(
+        blocks,
+        codebook
+    )
+
+    # ---------------------------------------------------------
+    # 6. Reconstruct the compressed image
+    # ---------------------------------------------------------
+
+    # Replace each block with its corresponding codebook vector.
+    reconstructed_blocks = codebook[codes]
+
+    # Restore the two-dimensional block arrangement.
+    reconstructed_blocks = reconstructed_blocks.reshape(
+        H // b,
+        W // b,
+        b,
+        b
+    )
+
+    # Move the within-block row dimension back into image rows
+    # and the within-block column dimension back into image columns.
+    recon = reconstructed_blocks.transpose(0, 2, 1, 3)
+
+    # Reconstruct the cropped grayscale image.
+    # The result remains a floating-point array.
+    recon = recon.reshape(H, W).astype(float)
+
+    # ---------------------------------------------------------
+    # 7. Calculate reconstruction quality
+    # ---------------------------------------------------------
+
+    # Calculate mean squared error against the cropped original image.
+    mse = float(np.mean((cropped - recon) ** 2))
+
+    # Calculate peak signal-to-noise ratio.
+    if mse == 0.0:
+        psnr = float("inf")
+    else:
+        psnr = float(
+            10.0 * np.log10((255.0 ** 2) / mse)
+        )
+
+    # ---------------------------------------------------------
+    # 8. Calculate compression storage requirements
+    # ---------------------------------------------------------
+
+    # Calculate index and codebook storage using 8 bits per scalar.
+    bits = vq_bits(
+        n_blocks,
+        b * b,
+        K,
+        B=8
+    )
+
+    # Total number of pixels in the cropped image.
+    total_pixels = H * W
+
+    # Bits per pixel used by the block indices.
+    bpp_codes = float(
+        bits["code_bits"] / total_pixels
+    )
+
+    # Total bits per pixel, including the codebook.
+    bpp_total = float(
+        bits["total_bits"] / total_pixels
+    )
+
+    # ---------------------------------------------------------
+    # 9. Return the complete compression results
+    # ---------------------------------------------------------
+
+    return {
+        "recon": recon,
+        "codes": codes,
+        "codebook": codebook,
+        "mse": mse,
+        "psnr": psnr,
+        "bpp_codes": bpp_codes,
+        "bpp_total": bpp_total
+    }
+
