@@ -4477,3 +4477,391 @@ def fit_bernoulli_mixture(X, K, rng, n_init=1, max_iter=100,
 
     return best_result
 
+# Step 30 - clustering_bakeoff
+METHODS = (
+    "single",
+    "complete",
+    "average",
+    "kmeans",
+    "kmedoids",
+    "gmm_full",
+    "gmm_diag",
+    "spectral",
+    "bernoulli"
+)
+
+
+def cluster_with(method, data, K, rng):
+    """
+    Run a specified clustering algorithm on a dataset.
+
+    Parameters
+    ----------
+    method : str
+        Clustering method to execute.
+
+    data : dict
+        Dataset dictionary containing:
+            X : Optional feature matrix.
+            D : Optional pairwise dissimilarity matrix.
+            n_neighbors : Optional number of spectral neighbours.
+
+    K : int
+        Number of clusters.
+
+    rng : numpy.random.Generator
+        Random number generator for reproducible initialization.
+
+    Returns
+    -------
+    numpy.ndarray or None
+        Integer cluster labels, or None when the selected method
+        cannot run on the available dataset.
+
+    Raises
+    ------
+    ValueError
+        If an unknown clustering method is provided.
+    """
+
+    # Validate the requested clustering method.
+    if method not in METHODS:
+        raise ValueError(f"Unknown clustering method: {method}")
+
+    # Retrieve the available feature and dissimilarity matrices.
+    X = data.get("X")
+    D = data.get("D")
+
+    # ---------------------------------------------------------
+    # 1. Hierarchical clustering and K-Medoids
+    # ---------------------------------------------------------
+
+    if method in ("single", "complete", "average", "kmedoids"):
+
+        # Construct the dissimilarity matrix when it is not supplied.
+        if D is None:
+
+            # These methods require either D or X.
+            if X is None:
+                return None
+
+            D = pairwise_distances(
+                np.asarray(X, dtype=float)
+            )
+
+        else:
+            D = np.asarray(D, dtype=float)
+
+        N = D.shape[0]
+
+        # Single-link hierarchical clustering using an MST.
+        if method == "single":
+
+            Z = single_link_mst(D)
+
+            labels = cut_tree(
+                Z,
+                n_clusters=K
+            )
+
+            return np.asarray(labels, dtype=int)
+
+        # Complete-link hierarchical clustering.
+        elif method == "complete":
+
+            Z = agglomerate(
+                D,
+                linkage="complete"
+            )
+
+            labels = cut_tree(
+                Z,
+                n_clusters=K
+            )
+
+            return np.asarray(labels, dtype=int)
+
+        # Average-link hierarchical clustering.
+        elif method == "average":
+
+            Z = agglomerate(
+                D,
+                linkage="average"
+            )
+
+            labels = cut_tree(
+                Z,
+                n_clusters=K
+            )
+
+            return np.asarray(labels, dtype=int)
+
+        # -----------------------------------------------------
+        # 2. K-Medoids using PAM
+        # -----------------------------------------------------
+
+        elif method == "kmedoids":
+
+            # Perform three independent PAM initializations.
+            best_z = None
+            best_cost = np.inf
+
+            for _ in range(3):
+
+                # Select K distinct observations as initial medoids.
+                m0 = rng.choice(
+                    N,
+                    size=K,
+                    replace=False
+                )
+
+                # Run Partitioning Around Medoids.
+                m, z, history = pam(
+                    D,
+                    m0
+                )
+
+                # Obtain the final cost of the current run.
+                current_cost = float(history[-1])
+
+                # Retain the solution with the lowest final cost.
+                # Strict comparison preserves the earlier run
+                # when two solutions have equal costs.
+                if current_cost < best_cost:
+
+                    best_cost = current_cost
+                    best_z = z.copy()
+
+            return np.asarray(best_z, dtype=int)
+
+    # ---------------------------------------------------------
+    # 3. Methods requiring a feature matrix
+    # ---------------------------------------------------------
+
+    # Return None when the feature matrix is unavailable.
+    if X is None:
+        return None
+
+    X = np.asarray(X, dtype=float)
+
+    # ---------------------------------------------------------
+    # 4. K-Means
+    # ---------------------------------------------------------
+
+    if method == "kmeans":
+
+        result = kmeans_restarts(
+            X,
+            K,
+            10,
+            rng
+        )
+
+        return np.asarray(result["z"], dtype=int)
+
+    # ---------------------------------------------------------
+    # 5. Gaussian Mixture Model with full covariance
+    # ---------------------------------------------------------
+
+    elif method == "gmm_full":
+
+        result = fit_gmm(
+            X,
+            K,
+            cov_type="full",
+            rng=rng,
+            n_init=5
+        )
+
+        return np.asarray(result["z"], dtype=int)
+
+    # ---------------------------------------------------------
+    # 6. Gaussian Mixture Model with diagonal covariance
+    # ---------------------------------------------------------
+
+    elif method == "gmm_diag":
+
+        result = fit_gmm(
+            X,
+            K,
+            cov_type="diag",
+            rng=rng,
+            n_init=5
+        )
+
+        return np.asarray(result["z"], dtype=int)
+
+    # ---------------------------------------------------------
+    # 7. Spectral clustering
+    # ---------------------------------------------------------
+
+    elif method == "spectral":
+
+        # Obtain the requested number of nearest neighbours.
+        k = data.get("n_neighbors", 10)
+
+        # Calculate pairwise Euclidean distances.
+        d = pairwise_distances(
+            X,
+            metric="euclidean"
+        )
+
+        # Sort every row's distances in ascending order.
+        # Column zero contains the self-distance.
+        sorted_distances = np.sort(
+            d,
+            axis=1
+        )
+
+        # Calculate the Gaussian kernel bandwidth as the median
+        # distance to the k-th nearest neighbour.
+        sigma = float(
+            np.median(sorted_distances[:, k])
+        )
+
+        # Construct the sparse Gaussian similarity graph.
+        W = gaussian_affinity(
+            X,
+            sigma,
+            n_neighbors=k
+        )
+
+        # Perform symmetric spectral clustering.
+        result = spectral_clustering(
+            W,
+            K,
+            rng,
+            variant="sym"
+        )
+
+        return np.asarray(result["z"], dtype=int)
+
+    # ---------------------------------------------------------
+    # 8. Bernoulli Mixture Model
+    # ---------------------------------------------------------
+
+    elif method == "bernoulli":
+
+        # Bernoulli mixture models require binary observations.
+        # Return None when the dataset contains non-binary values.
+        if not np.all((X == 0) | (X == 1)):
+            return None
+
+        # Fit the Bernoulli mixture using five independent restarts.
+        result = fit_bernoulli_mixture(
+            X,
+            K,
+            rng,
+            n_init=5
+        )
+
+        return np.asarray(result["z"], dtype=int)
+
+    # This branch is defensive because all supported methods
+    # have already been handled above.
+    raise ValueError(f"Unknown clustering method: {method}")
+
+
+def clustering_bakeoff(datasets, methods, seed=0):
+    """
+    Compare clustering methods across multiple datasets using ARI.
+
+    Parameters
+    ----------
+    datasets : dict
+        Dictionary mapping dataset names to dataset dictionaries.
+
+        Each dataset dictionary must contain:
+            y : Ground-truth labels.
+            K : Number of clusters.
+
+        It may additionally contain:
+            X : Feature matrix.
+            D : Dissimilarity matrix.
+            n_neighbors : Spectral clustering neighbourhood size.
+
+    methods : iterable
+        Clustering methods to evaluate.
+
+    seed : int, default=0
+        Random seed used for reproducible clustering runs.
+
+    Returns
+    -------
+    dict
+        Nested dictionary of the form:
+
+        {
+            dataset_name: {
+                method_name: ARI_score or None
+            }
+        }
+
+        None indicates that the selected method could not
+        run on the corresponding dataset.
+    """
+
+    # Store results for every dataset.
+    results = {}
+
+    # ---------------------------------------------------------
+    # 1. Process each dataset
+    # ---------------------------------------------------------
+
+    for name, data in datasets.items():
+
+        # Retrieve the ground-truth labels and cluster count.
+        y_true = np.asarray(data["y"])
+        K = data["K"]
+
+        # Store the scores for the current dataset.
+        dataset_scores = {}
+
+        # -----------------------------------------------------
+        # 2. Evaluate every requested clustering method
+        # -----------------------------------------------------
+
+        for method in methods:
+
+            # Create a fresh random generator for every
+            # dataset-method combination.
+            #
+            # This ensures that results do not depend on
+            # the order in which other methods are executed.
+            rng = np.random.default_rng(seed)
+
+            # Run the selected clustering algorithm.
+            labels_pred = cluster_with(
+                method,
+                data,
+                K,
+                rng
+            )
+
+            # -------------------------------------------------
+            # 3. Calculate the Adjusted Rand Index
+            # -------------------------------------------------
+
+            # Store None when the method cannot run on the dataset.
+            if labels_pred is None:
+
+                dataset_scores[method] = None
+
+            else:
+
+                # Calculate the external clustering evaluation scores.
+                scores = cluster_scores(
+                    labels_pred,
+                    y_true
+                )
+
+                # Store the Adjusted Rand Index as a Python float.
+                dataset_scores[method] = float(
+                    scores["ari"]
+                )
+
+        # Add the completed dataset results.
+        results[name] = dataset_scores
+
+    return results
+
